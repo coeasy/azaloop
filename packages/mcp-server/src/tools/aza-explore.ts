@@ -251,6 +251,11 @@ export async function handleExplore(
       explore: result,
       summary,
     },
+    next_action: {
+      tool: 'aza_prd_review',
+      action: 'generate',
+      reason: `Explore complete — ${result.files_analyzed.length} files analyzed. Proceed to PRD generation with findings.`,
+    },
     metadata: {
       iteration: 0,
       progress: 'explore_complete',
