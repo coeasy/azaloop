@@ -1,0 +1,45 @@
+{
+  "name": "@azaloop/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AzaLoop shared types and schemas",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/coeasy/azaloop.git",
+    "directory": "packages/shared"
+  },
+  "bugs": {
+    "url": "https://github.com/coeasy/azaloop/issues"
+  },
+  "homepage": "https://github.com/coeasy/azaloop/tree/main/packages/shared#readme",
+  "author": "AzaLoop Contributors",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "azaloop",
+    "shared",
+    "types",
+    "schemas",
+    "mcp"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "rimraf": "^6.0.1"
+  }
+}

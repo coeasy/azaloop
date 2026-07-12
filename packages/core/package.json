@@ -1,0 +1,50 @@
+{
+  "name": "@azaloop/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AzaLoop core loop engine - three-level loop hierarchy with circuit breaker and completion gate",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/coeasy/azaloop.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/coeasy/azaloop/issues"
+  },
+  "homepage": "https://github.com/coeasy/azaloop/tree/main/packages/core#readme",
+  "author": "AzaLoop Contributors",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "azaloop",
+    "loop-engine",
+    "prd",
+    "autonomous-development",
+    "mcp",
+    "ai"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@azaloop/shared": "workspace:*",
+    "zod": "^3.23.8",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "rimraf": "^6.0.1",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.14.0"
+  }
+}

@@ -1,0 +1,12 @@
+# AzaLoop Goose Configuration
+version: "4.0"
+mcp_servers:
+  azaloop:
+    command: npx
+    args: ["@azaloop/mcp-server"]
+memory:
+  enabled: true
+  episodic_max: 100
+loop:
+  max_iterations: 50
+  hard_stop_on_security: true

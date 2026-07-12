@@ -1,0 +1,138 @@
+# AzaLoop PRD 复杂度分级矩阵
+# 根据 PRD 复杂度（L1-L4）决定文档深度与必需章节
+# 遵循宪法 CONST-004: 复杂度匹配 — 方案复杂度必须匹配问题复杂度
+
+# L1: 配置级 — 仅写变更说明 + 影响范围
+L1:
+  level: L1
+  name: 配置级
+  description: 仅需变更说明与影响范围
+  estimated_pages: 0.5
+  required_chapters: []
+  optional_chapters: [1, 2, 6]
+  doc_format: changelog
+  example_scenarios:
+    - 修改配置参数
+    - 调整阈值
+    - 开关功能特性
+    - 文案/文案微调
+  checklist:
+    - 变更说明（改了什么）
+    - 影响范围（影响哪些模块）
+    - 回滚方案
+  exclude:
+    - 架构图
+    - ER 模型
+    - 状态机
+    - 埋点规划
+  constitution_rule: CONST-004
+
+# L2: 规则级 — 2-3 页轻量文档
+L2:
+  level: L2
+  name: 规则级
+  description: 2-3 页轻量 PRD 文档
+  estimated_pages: 3
+  required_chapters: [1, 2, 6, 10]
+  optional_chapters: [4, 7, 14]
+  doc_format: lightweight_prd
+  example_scenarios:
+    - 新增单一功能模块
+    - 优化已有规则
+    - 新增 API 接口
+    - UI 页面调整
+  checklist:
+    - 项目背景简述
+    - 需求来源与场景
+    - 功能边界（做什么 / 不做什么）
+    - 功能需求（至少 1 个模块详解）
+  exclude:
+    - 商业分析
+    - 竞品分析
+    - 数据埋点详细规划
+    - 运营计划
+  constitution_rule: CONST-003
+
+# L3: 模块级 — 5-8 页标准 PRD
+L3:
+  level: L3
+  name: 模块级
+  description: 5-8 页标准 PRD 文档
+  estimated_pages: 8
+  required_chapters: [1, 2, 4, 6, 7, 10, 12, 14]
+  optional_chapters: [3, 5, 8, 9, 11, 13]
+  doc_format: standard_prd
+  example_scenarios:
+    - 新增完整功能模块
+    - 重构核心流程
+    - 新增子系统
+    - 多角色协作功能
+  checklist:
+    - 项目背景 + 痛点
+    - 需求来源 + 场景还原
+    - 收益目标（北极星 + 量化）
+    - 项目范围（功能边界 + 排除项）
+    - 风险识别与应对
+    - 功能需求（架构图 + ER + 流程 + 模块详解）
+    - 角色与权限（RBAC）
+    - 待决事项
+  exclude: []
+  constitution_rule: CONST-001
+
+# L4: 系统级 — 完整 14 章 PRD
+L4:
+  level: L4
+  name: 系统级
+  description: 完整 14 章 PRD 文档
+  estimated_pages: 20
+  required_chapters: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+  optional_chapters: []
+  doc_format: full_prd
+  example_scenarios:
+    - 全新产品线
+    - 平台级系统重构
+    - 商业化产品发布
+    - 跨团队大型项目
+  checklist:
+    - 全部 14 章完整填写
+    - 行业分析 + 竞品分析
+    - 商业模式 + ROI
+    - 完整架构图 + ER + 状态机
+    - 数据埋点规划
+    - RBAC + 数据权限
+    - 上线推广 + 监控体系
+  exclude: []
+  constitution_rule: CONST-005
+
+# 复杂度自动推断规则
+auto_infer:
+  description: |
+    根据需求描述特征自动推断复杂度。
+    信号越强，复杂度越高。取所有匹配信号的最高级别。
+  signals:
+    L1:
+      - 关键词: [配置, 参数, 阈值, 开关, 文案]
+      - 描述长度: "< 100 字符"
+    L2:
+      - 关键词: [新增接口, 页面调整, 优化规则, 小功能]
+      - 描述长度: "100 - 500 字符"
+    L3:
+      - 关键词: [模块, 子系统, 重构, 多角色, 流程]
+      - 描述长度: "500 - 2000 字符"
+    L4:
+      - 关键词: [全新产品, 平台, 商业化, 系统, 产品线]
+      - 描述长度: "> 2000 字符"
+
+# 复杂度与 Story 数量映射
+story_count:
+  L1: 1
+  L2: 3
+  L3: 5
+  L4: 8
+
+# 复杂度与验收维度映射
+review_dimensions_by_complexity:
+  L1: [文档结构, 异常处理]
+  L2: [业务调研, 文档结构, 功能需求, 异常处理, MVP策略]
+  L3: [业务调研, 产品定型, 场景分析, 文档结构, 产品架构, 数据模型, 流程设计, 交互体验, MVP策略, 异常处理]
+  L4: [业务调研, 产品定型, 产品定位, 场景分析, 文档结构, 产品架构, 数据模型, 流程设计, 交互体验, 商业分析, MVP策略, 异常处理, AI功能, 运营计划]

@@ -1,0 +1,24 @@
+# AzaLoop 0.1.0 Configuration
+version: "0.1.0"
+
+project:
+  name: azaloop
+  root: .
+
+loop:
+  max_iterations: 50
+  deadlock_threshold: 3
+  hard_stop_on_security: true
+
+memory:
+  enabled: true
+  episodic_max: 100
+  compression_threshold: 50
+
+quality:
+  gates:
+    lint: true
+    test: true
+    regression: true
+    security: true
+    acceptance: true

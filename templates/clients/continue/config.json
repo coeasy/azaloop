@@ -1,0 +1,12 @@
+{
+  "mcpServers": [
+    {
+      "name": "azaloop",
+      "command": "npx",
+      "args": ["@azaloop/mcp-server"]
+    }
+  ],
+  "rules": {
+    "continuerules": ".continuerules"
+  }
+}

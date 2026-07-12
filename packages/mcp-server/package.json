@@ -1,0 +1,66 @@
+{
+  "name": "@azaloop/mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AzaLoop MCP Server - PRD-driven autonomous development loop engine for AI coding assistants",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "azaloop-mcp-server": "dist/server.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/coeasy/azaloop.git",
+    "directory": "packages/mcp-server"
+  },
+  "bugs": {
+    "url": "https://github.com/coeasy/azaloop/issues"
+  },
+  "homepage": "https://github.com/coeasy/azaloop/tree/main/packages/mcp-server#readme",
+  "author": "AzaLoop Contributors",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "azaloop",
+    "mcp",
+    "mcp-server",
+    "mcp-protocol",
+    "ai",
+    "coding-assistant",
+    "prd",
+    "autonomous-development",
+    "cursor",
+    "claude-code",
+    "opencode"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist",
+    "postinstall": "node -e \"console.log('[AzaLoop] Installed! Run \\'npx @azaloop/cli init\\' in your project to get started.')\""
+  },
+  "dependencies": {
+    "@azaloop/core": "workspace:*",
+    "@azaloop/shared": "workspace:*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "rimraf": "^6.0.1",
+    "@types/node": "^20.14.0"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "azaloop-agent",
+  "version": "0.1.0",
+  "description": "AzaLoop development lifecycle agent",
+  "model": "sonnet-4",
+  "instructions": "Follow AzaLoop 5-stage pipeline. Execute continue.md on session start. Always follow next_action chain.",
+  "mcpServers": {
+    "azaloop": {
+      "command": "npx",
+      "args": ["@azaloop/mcp-server"]
+    }
+  }
+}

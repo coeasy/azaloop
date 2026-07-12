@@ -1,0 +1,191 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Run e2e real loop test
+        run: npx tsx scripts/e2e-real-loop.ts
+        if: matrix.node-version == '20.x'
+
+  publish-npm:
+    needs: build-and-test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Publish to npm
+        working-directory: packages/shared
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @azaloop/core
+        working-directory: packages/core
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @azaloop/mcp-server
+        working-directory: packages/mcp-server
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @azaloop/cli
+        working-directory: packages/cli
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  build-portable:
+    needs: build-and-test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Build portable package
+        run: |
+          mkdir -p dist/portable
+          npx esbuild packages/cli/src/index.ts --bundle --outfile=dist/portable/cli-bundle.js --platform=node --target=node20 --format=cjs --minify
+          npx esbuild packages/mcp-server/src/server.ts --bundle --outfile=dist/portable/mcp-bundle.js --platform=node --target=node20 --format=cjs --minify
+          echo '{"main":"dist/portable/cli-bundle.js","output":"dist/portable/aza-blob.bin","disableExperimentalSEAWarning":true}' > dist/portable/aza-sea-config.json
+          echo '{"main":"dist/portable/mcp-bundle.js","output":"dist/portable/azaloop-mcp-blob.bin","disableExperimentalSEAWarning":true}' > dist/portable/mcp-sea-config.json
+          node --experimental-sea-config dist/portable/aza-sea-config.json
+          node --experimental-sea-config dist/portable/mcp-sea-config.json
+        shell: bash
+
+      - name: Create SEA executables
+        run: |
+          cp $(which node) dist/portable/aza
+          cp $(which node) dist/portable/azaloop-mcp
+          npx postject dist/portable/aza NODE_SEA_BLOB dist/portable/aza-blob.bin --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+          npx postject dist/portable/azaloop-mcp NODE_SEA_BLOB dist/portable/azaloop-mcp-blob.bin --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+        shell: bash
+
+      - name: Copy assets
+        run: |
+          cp -r templates dist/portable/templates
+          cp -r docs dist/portable/docs
+          cp README.md dist/portable/
+          cp README.en.md dist/portable/
+          cp WELCOME.md dist/portable/
+          cp LICENSE dist/portable/
+          cp scripts/install.sh dist/portable/
+        shell: bash
+
+      - name: Create portable zip
+        run: |
+          cd dist/portable
+          zip -r ../azaloop-portable-${{ matrix.os }}.zip .
+        shell: bash
+
+      - name: Upload portable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-${{ matrix.os }}
+          path: dist/azaloop-portable-*.zip
+
+  create-release:
+    needs: [publish-npm, build-portable]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download portable packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/**/*.zip

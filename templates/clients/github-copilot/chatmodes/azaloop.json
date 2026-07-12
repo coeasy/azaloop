@@ -1,0 +1,14 @@
+{
+  "name": "azaloop",
+  "title": "AzaLoop 0.1.0",
+  "description": "AzaLoop development lifecycle mode",
+  "instructions": "templates/clients/github-copilot/instructions/azaloop.md",
+  "mcp": {
+    "servers": {
+      "azaloop": {
+        "command": "npx",
+        "args": ["@azaloop/mcp-server"]
+      }
+    }
+  }
+}

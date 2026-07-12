@@ -1,0 +1,63 @@
+# AzaLoop 项目宪法 — 12 条核心原则
+# 所有 PRD 生成和决策必须遵守以下宪法
+
+rules:
+  - id: CONST-001
+    title: 用户价值驱动
+    description: 所有需求必须追溯到明确的用户价值，拒绝"为了技术而技术"的需求
+    check: 每个 story 必须有用户场景描述
+
+  - id: CONST-002
+    title: 可测试验收
+    description: 每个 acceptance_criteria 必须可测试（可量化/可验证）
+    check: 不接受"用户体验好""性能提升"等不可测量的标准
+
+  - id: CONST-003
+    title: 最小可行
+    description: 优先 MVP，拒绝"大而全"的一次性设计
+    check: P0 范围必须能在 3 个 story 内交付
+
+  - id: CONST-004
+    title: 复杂度匹配
+    description: 方案复杂度必须匹配问题复杂度
+    check: L1 问题不允许使用微服务架构
+
+  - id: CONST-005
+    title: 架构可演进
+    description: 架构必须支持增量演进，拒绝"一步到位"的假设
+    check: 每个架构决策必须说明演进路径
+
+  - id: CONST-006
+    title: 安全内建
+    description: 安全必须从设计阶段开始考虑，而非事后修补
+    check: 每个 story 必须关联安全考量
+
+  - id: CONST-007
+    title: 依赖显式化
+    description: 所有外部依赖必须在 PRD 中明确记录
+    check: 不允许隐式引入第三方服务
+
+  - id: CONST-008
+    title: 风险透明
+    description: 已知风险必须记录，不得隐瞒或淡化
+    check: 每个高风险必须有缓解方案
+
+  - id: CONST-009
+    title: 文档同步
+    description: 代码变更必须同步更新相关文档
+    check: PRD 变更必须更新 architecture 和 stories
+
+  - id: CONST-010
+    title: 验收闭环
+    description: 每个 story 完成后必须对照 acceptance_criteria 逐条验证
+    check: 验收未通过不标记完成
+
+  - id: CONST-011
+    title: 渐进交付
+    description: 拆分为独立可交付的增量，每个增量都有独立价值
+    check: 每个 story 必须能独立交付
+
+  - id: CONST-012
+    title: 反思沉淀
+    description: 每次迭代后必须记录学到的经验
+    check: 每个迭代必须有 retrospective 记录

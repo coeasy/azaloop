@@ -1,0 +1,214 @@
+# AzaLoop Security Policy — Declarative Configuration
+# Loaded by L6_security/policy-as-code.ts at runtime.
+# Modeled after shellward's policy-as-code pattern.
+
+name: azaloop-default
+version: "1.0.0"
+enabled: true
+
+# Conditions that cause the pipeline to FAIL (block the tool call).
+fail_on:
+  kinds:
+    - secret
+    - overseas
+    - prompt_injection
+    - data_exfiltration
+    - mcp_poisoning
+  severities:
+    - critical
+
+# Maximum number of findings before blocking (0 = no limit, block on any).
+max_findings: 0
+
+# Whether to also WARN (not block) on non-blocking findings.
+warn_on_non_blocking: true
+
+# Whitelist of allowed overseas endpoints (for 数据出境 compliance).
+allow_overseas: []
+
+# ── China Compliance Extensions ──
+# These settings control the compliance-checker.ts behavior.
+compliance:
+  # Frameworks to check (网络安全法 / PIPL / 等保2.0 / 数据出境 / AI标识)
+  frameworks:
+    - cybersecurity_law
+    - pipl
+    - mlps2
+    - data_export
+    - ai_labeling
+
+  # Minimum compliance score to pass (0-100)
+  min_score: 60
+
+  # Auto-block if Red-level violations found
+  block_on_red: true
+
+# ── Scanner Configuration ──
+scanners:
+  secret:
+    enabled: true
+    # Minimum severity to report
+    min_severity: medium
+  sql_injection:
+    enabled: true
+  xss:
+    enabled: true
+  dependency:
+    enabled: true
+    # Block on critical/high CVEs
+    min_severity: high
+  prompt_injection:
+    enabled: true
+  data_exfiltration:
+    enabled: true
+  mcp_poisoning:
+    enabled: true
+  code_injection:
+    enabled: true
+
+# ── MCP Event Simulator Integration ──
+# Controls which defense layers are active in pre-tool/post-tool simulation.
+mcp_event_simulator:
+  pre_tool:
+    # L1: Prompt guard
+    prompt_guard: true
+    # L2: Input audit (secret scanning)
+    input_audit: true
+    # L3: Tool interception (policy-based blocking)
+    tool_interception: true
+  post_tool:
+    # L4: Output scanning (secret detection in output)
+    output_scanning: true
+    # L5: Security gate (policy evaluation)
+    security_gate: true
+    # L6: Data flow analysis
+    data_flow: false
+    # L7: Outbound check
+    outbound_check: false
+# AzaLoop Security Policy-as-Code Configuration Template
+# Modeled after .shellward.json-style declarative security policies
+# This file defines the security policy for the AzaLoop pipeline.
+
+name: azaloop-default
+version: 1.0.0
+enabled: true
+
+# Conditions that cause the pipeline to FAIL (block)
+# If any finding matches these kinds or severities, the pipeline is blocked
+failOn:
+  # Fail by finding kind
+  kinds:
+    - secret                 # Hardcoded secrets (API keys, passwords, tokens)
+    - overseas               # Overseas LLM endpoints (data cross-border)
+    - prompt_injection       # Prompt injection attempts
+    - data_exfiltration      # Data exfiltration chains
+    - mcp_poisoning          # MCP tool poisoning
+    # - pii                  # Uncomment to block on PII exposure
+    # - env-perm             # Uncomment to block on environment permission issues
+
+  # Fail by severity
+  severities:
+    - critical               # All critical findings block the pipeline
+    # - high               # Uncomment to also block on high-severity findings
+
+# Maximum number of findings before blocking (0 = no limit)
+# If total findings exceed this number, the pipeline is blocked
+maxFindings: 0
+
+# Whitelist of allowed overseas endpoints (with justification)
+# Endpoints listed here will not trigger "overseas" violations
+allowOverseas:
+  # - domain: "api.github.com"
+  #   reason: "Required for CI/CD — no sensitive data sent"
+  # - domain: "*.npmjs.org"
+  #   reason: "Package registry — dependency resolution only"
+  - domain: "dashscope.aliyuncs.com"
+    reason: "通义千问 — domestic LLM endpoint, no cross-border data transfer"
+
+# Whether to issue warnings (non-blocking) for findings that don't match failOn
+warnOnNonBlocking: true
+
+# Scanner-specific configurations (informational — consumed by individual scanners)
+scanners:
+  secret:
+    enabled: true
+    # Additional secret patterns to scan for
+    customPatterns: []
+    # Paths to exclude from secret scanning
+    excludePaths:
+      - "node_modules/**"
+      - "dist/**"
+      - ".git/**"
+
+  prompt_injection:
+    enabled: true
+    # Threshold risk score to block (0-100)
+    blockThreshold: 60
+    # Languages to scan
+    languages:
+      - zh
+      - en
+
+  data_exfiltration:
+    enabled: true
+    # Max steps to look back when chaining read→send
+    chainWindow: 5
+    # Channels to monitor
+    channels:
+      - curl
+      - wget
+      - nc
+      - email
+      - script_http
+      - socket
+      - dns
+      - git
+
+  mcp_poisoning:
+    enabled: true
+    # Enable rug-pull detection (tool description change detection)
+    rugPullDetection: true
+    # Fingerprint storage path (relative to project root)
+    fingerprintStore: ".azaloop/mcp-fingerprints.json"
+    # Block tools with risk score above this threshold
+    blockThreshold: 50
+
+  compliance:
+    enabled: true
+    # Frameworks to check
+    frameworks:
+      - cybersecurity_law      # 网络安全法
+      - pipl                   # 个人信息保护法
+      - dengbao_2              # 等保2.0
+      - data_cross_border      # 数据出境
+      - ai_labeling            # AI标识
+    # Minimum compliance level to pass (red/yellow/green)
+    minLevel: yellow
+    # Block on red level
+    blockOnRed: true
+
+# Override rules (per-path or per-project)
+overrides:
+  # Example: allow secrets in test fixtures
+  # - path: "test/fixtures/**"
+  #   skipKinds: [secret]
+  #   reason: "Test fixture files — non-production secrets"
+
+  # Example: allow overseas endpoints in development config
+  # - path: ".env.development"
+  #   skipKinds: [overseas]
+  #   reason: "Development environment — overseas endpoints for testing only"
+
+# Notification configuration
+notifications:
+  # Notify on blocked pipeline
+  onBlock: true
+  # Notify on warnings
+  onWarn: false
+  # Notification channels
+  channels:
+    - type: console
+      enabled: true
+    # - type: webhook
+    #   url: "https://hooks.slack.com/..."
+    #   enabled: false

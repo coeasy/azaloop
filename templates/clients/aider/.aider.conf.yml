@@ -1,0 +1,12 @@
+# AzaLoop Aider Configuration
+model: claude-sonnet-4-20250514
+editor-model: claude-sonnet-4-20250514
+weak-model: claude-3-haiku-20240307
+editor-edit-format: diff
+commit: false
+auto-commits: false
+lint: true
+lint-cmd: npx tsc --noEmit
+-aider-prompt: |
+  Follow AzaLoop conventions from CONVENTIONS.md
+  Execute continue.md rules on session start.

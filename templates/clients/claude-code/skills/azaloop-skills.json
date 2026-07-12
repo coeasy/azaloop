@@ -1,0 +1,10 @@
+{
+  "skills": {
+    "prd": { "path": "packages/core/src/L5_skill/core-skills/prd-skill.md" },
+    "arch": { "path": "packages/core/src/L5_skill/core-skills/arch-skill.md" },
+    "db": { "path": "packages/core/src/L5_skill/core-skills/db-skill.md" },
+    "api": { "path": "packages/core/src/L5_skill/core-skills/api-skill.md" },
+    "test": { "path": "packages/core/src/L5_skill/core-skills/test-skill.md" },
+    "deploy": { "path": "packages/core/src/L5_skill/core-skills/deploy-skill.md" }
+  }
+}

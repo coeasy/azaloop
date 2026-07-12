@@ -1,0 +1,63 @@
+{
+  "name": "@azaloop/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AzaLoop CLI — one-command setup for all 25+ MCP clients",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "aza": "dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/coeasy/azaloop.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/coeasy/azaloop/issues"
+  },
+  "homepage": "https://github.com/coeasy/azaloop/tree/main/packages/cli#readme",
+  "author": "AzaLoop Contributors",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "azaloop",
+    "cli",
+    "mcp",
+    "cursor",
+    "claude-code",
+    "opencode",
+    "setup",
+    "init"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist",
+    "postinstall": "node -e \"try{require('./dist/postinstall')}catch(e){}\""
+  },
+  "dependencies": {
+    "@azaloop/core": "workspace:*",
+    "@azaloop/shared": "workspace:*",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "rimraf": "^6.0.1",
+    "@types/node": "^20.14.0"
+  }
+}

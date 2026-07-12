@@ -1,0 +1,163 @@
+# AzaLoop Client Capability Matrix
+# Defines which capabilities each AI client supports natively
+
+clients:
+  cursor:
+    tier: T1
+    capabilities:
+      hooks: true
+      rules: true
+      mcp: true
+      skills: true
+      native_loop: true
+      stop_hook: true
+
+  claude-code:
+    tier: T1
+    capabilities:
+      hooks: true
+      rules: true
+      mcp: true
+      skills: true
+      native_loop: true
+      stop_hook: true
+
+  trae:
+    tier: T1
+    capabilities:
+      hooks: partial
+      rules: true
+      mcp: true
+      skills: false
+      native_loop: true
+      stop_hook: false
+
+  windsurf:
+    tier: T1
+    capabilities:
+      hooks: false
+      rules: true
+      mcp: true
+      skills: false
+      native_loop: true
+      stop_hook: false
+
+  vscode:
+    tier: T2
+    capabilities:
+      hooks: false
+      rules: false
+      mcp: true
+      skills: false
+      native_loop: false
+      stop_hook: false
+
+  cline:
+    tier: T2
+    capabilities:
+      hooks: false
+      rules: true
+      mcp: true
+      skills: true
+      native_loop: true
+      stop_hook: false
+
+  continue:
+    tier: T2
+    capabilities:
+      hooks: false
+      rules: true
+      mcp: true
+      skills: false
+      native_loop: false
+      stop_hook: false
+
+  roo-code:
+    tier: T2
+    capabilities:
+      hooks: false
+      rules: true
+      mcp: true
+      skills: true
+      native_loop: true
+      stop_hook: false
+
+  kiro:
+    tier: T2
+    capabilities:
+      hooks: false
+      rules: true
+      mcp: true
+      skills: false
+      native_loop: false
+      stop_hook: false
+
+  github-copilot:
+    tier: T2
+    capabilities:
+      hooks: false
+      rules: true
+      mcp: true
+      skills: false
+      native_loop: false
+      stop_hook: false
+
+  openhands:
+    tier: T2
+    capabilities:
+      hooks: false
+      rules: true
+      mcp: true
+      skills: false
+      native_loop: false
+      stop_hook: false
+
+  aider:
+    tier: T3
+    capabilities:
+      hooks: false
+      rules: true
+      mcp: false
+      skills: false
+      native_loop: false
+      stop_hook: false
+
+  goose:
+    tier: T3
+    capabilities:
+      hooks: false
+      rules: false
+      mcp: true
+      skills: false
+      native_loop: false
+      stop_hook: false
+
+  zed:
+    tier: T3
+    capabilities:
+      hooks: false
+      rules: true
+      mcp: true
+      skills: false
+      native_loop: false
+      stop_hook: false
+
+  codeium:
+    tier: T3
+    capabilities:
+      hooks: false
+      rules: true
+      mcp: true
+      skills: false
+      native_loop: false
+      stop_hook: false
+
+  droid:
+    tier: T3
+    capabilities:
+      hooks: false
+      rules: true
+      mcp: true
+      skills: false
+      native_loop: false
+      stop_hook: false

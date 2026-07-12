@@ -1,0 +1,10 @@
+{
+  "mcp.enabled": true,
+  "mcp.servers": {
+    "azaloop": {
+      "command": "npx",
+      "args": ["@azaloop/mcp-server"]
+    }
+  },
+  "chat.mcpTools": true
+}

@@ -1,0 +1,26 @@
+{
+  "name": "azaloop",
+  "version": "0.1.0",
+  "description": "AzaLoop 0.1.0 — PRD-driven autonomous development loop engine",
+  "capabilities": ["mcp", "hooks", "skills"],
+  "mcp": {
+    "serverPath": "@azaloop/mcp-server",
+    "tools": [
+      "aza_prd_generate", "aza_prd_validate",
+      "aza_loop_next", "aza_loop_status", "aza_loop_complete", "aza_loop_stop",
+      "aza_task_design", "aza_task_implement", "aza_task_verify",
+      "aza_quality_check",
+      "aza_memory_query", "aza_memory_record",
+      "aza_context_calibrate",
+      "aza_continue",
+      "aza_health",
+      "aza_doc_generate",
+      "aza_skill_search", "aza_skill_list",
+      "aza_security_scan"
+    ]
+  },
+  "hooks": {
+    "session-start": "CLAUDE.md",
+    "post-tool": "update-resume"
+  }
+}

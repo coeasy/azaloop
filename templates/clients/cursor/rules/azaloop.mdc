@@ -1,0 +1,18 @@
+---
+description: AzaLoop 0.1.0 development rules
+globs: *
+---
+# AzaLoop Development Rules
+
+Follow the 5-stage pipeline: open → design → build → verify → archive.
+Each stage completes its guard checks before advancing.
+
+## Quality Gates
+Before marking any story done:
+1. TypeScript compilation passes
+2. All tests pass
+3. Security scan passes (no critical)
+4. Acceptance criteria verified
+
+## Session Start
+Execute continue.md rules on every session start.
