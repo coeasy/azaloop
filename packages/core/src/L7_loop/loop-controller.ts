@@ -6,7 +6,7 @@ import { StrikeSystem } from '../L4_discipline/strike-system';
 import { CircuitBreaker } from './circuit-breaker';
 import { CompletionGate, DEFAULT_BLOCK_COUNT_LIMIT } from './completion-gate';
 import { LoopAudit } from './loop-audit';
-import { InnerLoop, type StageHandlerProvider } from './inner-loop';
+import { InnerLoop, type InnerStageResult, type StageHandlerProvider } from './inner-loop';
 import { OuterLoop, type StoryProvider, type HumanGateFn, type CommitFn, type OuterLoopResult, createDefaultStoryProvider, createDefaultHumanGate, createDefaultCommit } from './outer-loop';
 import { createRealHandlerProvider } from './real-handlers';
 import { StateManager } from '../state/state-manager';
@@ -14,7 +14,7 @@ import { RunStateManager, AuditLog } from '../state/state-manager';
 import { ContextOrchestrator, type ContextEntryBundle } from '../L2_memory/context-orchestrator';
 import { InjectionEngine } from '../L9_knowledge/injection-engine';
 import { ConfigLoader } from '../config/config-loader';
-import { DecisionPointRegistry, type DecisionPointRecord, type DPStatus } from './decision-points';
+import { DecisionPointRegistry, contentHash, type DecisionPointRecord, type DPStatus } from './decision-points';
 import { ResumeGenerator } from '../continuity/resume-generator';
 import * as fs from 'fs';
 import type { LoopResponse, NextAction } from '@azaloop/shared';
@@ -93,6 +93,10 @@ export class LoopController {
   private checkerCache: Map<string, { result: any; timestamp: number }> = new Map();
   /** Decision Point registry for DP-0 to DP-7 protocol (auditable stage handoffs) */
   readonly dpRegistry: DecisionPointRegistry;
+  /** CP1 drift detection: content hashes of PRD/contract from last sync (spec-superflow pattern) */
+  private lastHashes: { prd?: string; contract?: string } = {};
+  /** Set when content drift is detected (PRD/contract changed without going through aza_prd_modify) */
+  private driftDetected: boolean = false;
 
   readonly options: LoopControllerOptions;
   private conditions: Map<GuardConditionKey, boolean> = new Map();
@@ -215,13 +219,14 @@ export class LoopController {
       this.resumeGen = new ResumeGenerator(this.configLoopOptions.azaDir);
     }
 
-    // Initialize OuterLoop if enabled
+    // Initialize OuterLoop if enabled — pass shared InnerLoop so
+    // both loops observe the same StateMachine instance.
     if (this.configLoopOptions.enableOuterLoop) {
       this.outerLoop = new OuterLoop(this.circuitBreaker, {
         maxCycles: this.configLoopOptions.maxIterations,
         requireHumanGate: true,
         enableCircuitBreaker: true,
-      });
+      }, this.innerLoop);
     }
   }
 
@@ -251,6 +256,76 @@ export class LoopController {
     commit: CommitFn;
   }): void {
     this.outerLoopCallbacks = callbacks;
+  }
+
+  // ── v13: WorkerScheduler wiring (P1.1) ──
+
+  /**
+   * Worker scheduler (ruflo 12 workers + 270s heartbeat) that should
+   * receive `emitStageAdvance` / `emitStrike` / `emitCompletion` events
+   * from this loop controller. Set once at engine construction.
+   *
+   * The scheduler is optional — when null, the loop runs without the
+   * background observation layer (used by tests and CLI single-shot
+   * commands that don't need the overhead of 12 timers).
+   */
+  private workerScheduler: import('../L0_platform/workers').WorkerScheduler | null = null;
+
+  /**
+   * Last stage the loop controller observed during `syncStateFromFile`.
+   * Used to fire `emitStageAdvance` when the stage transitions. We use
+   * a marker (not a getter) so test setup can seed the value.
+   */
+  private lastObservedStage: Stage | null = null;
+
+  setWorkerScheduler(scheduler: import('../L0_platform/workers').WorkerScheduler | null): void {
+    this.workerScheduler = scheduler;
+  }
+
+  /**
+   * v13 — P1.1: notify the worker scheduler of a stage transition.
+   * Called by `syncStateFromFile` whenever the loaded stage differs
+   * from the last observed stage. Safe to call when no scheduler is
+   * wired (no-op). Schedulers without `on-stage-advance` workers simply
+   * log the event without running anything.
+   */
+  private notifyStageAdvance(newStage: Stage): void {
+    if (!this.workerScheduler) return;
+    if (this.lastObservedStage === newStage) return;
+    this.lastObservedStage = newStage;
+    try {
+      this.workerScheduler.emitStageAdvance(newStage);
+    } catch {
+      // best-effort: a misbehaving worker never blocks the loop
+    }
+  }
+
+  /**
+   * v13 — P1.1: notify the worker scheduler that a strike was recorded.
+   * Called from the strike system fan-out. `deepdive` is the canonical
+   * `on-strike` worker and will produce a root-cause report.
+   */
+  notifyStrike(reason: string): void {
+    if (!this.workerScheduler) return;
+    try {
+      this.workerScheduler.emitStrike(reason);
+    } catch {
+      // best-effort
+    }
+  }
+
+  /**
+   * v13 — P1.1: notify the worker scheduler that the loop completed.
+   * `document` / `audit` / `benchmark` are the canonical `on-completion`
+   * workers and will produce final summary reports.
+   */
+  notifyCompletion(): void {
+    if (!this.workerScheduler) return;
+    try {
+      this.workerScheduler.emitCompletion();
+    } catch {
+      // best-effort
+    }
   }
 
   // ── V12: Block count & stop hook tracking (no longer hardcoded) ──
@@ -294,14 +369,54 @@ export class LoopController {
         loops: fileState.loops as any,
         attestation: fileState.attestation || { verified: true },
       });
+      // v13 — P1.1: notify the worker scheduler of a stage transition.
+      // This fans out to `on-stage-advance` workers (consolidate, map,
+      // preload, refactor) which produce background reports.
+      this.notifyStageAdvance(stage);
     } catch {
       // File doesn't exist yet — use default state
+    }
+
+    // ── CP1 drift detection (spec-superflow content-level stale check):
+    //    Hash PRD + contract files and compare with last sync. If they
+    //    changed without going through aza_prd_modify, flag drift so
+    //    nextV12 can force back to the open stage. ──
+    if (this.configLoopOptions.azaDir) {
+      const newHashes: { prd?: string; contract?: string } = {};
+      try {
+        const prdPath = path.join(this.configLoopOptions.azaDir, 'prd.json');
+        if (fs.existsSync(prdPath)) {
+          const prdContent = fs.readFileSync(prdPath, 'utf8');
+          newHashes.prd = contentHash(prdContent);
+        }
+      } catch { /* best-effort */ }
+      try {
+        const contractPath = path.join(this.configLoopOptions.azaDir, 'contract.md');
+        if (fs.existsSync(contractPath)) {
+          const contractContent = fs.readFileSync(contractPath, 'utf8');
+          newHashes.contract = contentHash(contractContent);
+        }
+      } catch { /* best-effort */ }
+
+      // Compare with last sync (only flag drift if we had a previous hash)
+      if (this.lastHashes.prd && newHashes.prd && this.lastHashes.prd !== newHashes.prd) {
+        this.driftDetected = true;
+      }
+      if (this.lastHashes.contract && newHashes.contract && this.lastHashes.contract !== newHashes.contract) {
+        this.driftDetected = true;
+      }
+      // Update lastHashes for next comparison
+      this.lastHashes = newHashes;
     }
   }
 
   /**
    * Persist memory StateMachine state to file STATE.yaml.
    * Call after stage transitions and gate passes.
+   *
+   * V17: Also auto-generates RESUME.md after persisting state, so that
+   * session recovery always has the latest state regardless of whether
+   * the caller is an MCP handler or the AutoLoopScheduler.
    */
   async syncStateToFile(): Promise<void> {
     if (!this.stateManager) return;
@@ -324,6 +439,16 @@ export class LoopController {
       attestation: memState.attestation,
       strikes: currentState.strikes,
     });
+    // V17: Auto-generate RESUME.md after state sync
+    if (this.resumeGen && this.stateManager) {
+      await this.resumeGen.generate(this.stateManager, {
+        next_tool: 'aza_loop_next',
+        next_action: `continue_${memState.current_stage}`,
+        last_milestone: new Date().toISOString(),
+      }).catch(() => {
+        // best-effort: RESUME.md generation failure is non-fatal
+      });
+    }
   }
 
   // ── V11 compatibility: condition-based guards ──
@@ -342,7 +467,7 @@ export class LoopController {
 
   // ── Main entry: next() with V12 three-level routing ──
 
-  async next(currentStage?: string): Promise<LoopResponse<{ stage: string; progress: string; next_action: NextAction }>> {
+  async next(currentStage?: string): Promise<LoopResponse<{ stage: string; progress: string; next_action: NextAction; awaitingAction?: NextAction }>> {
     // V12: Sync state from file at the start of each cycle
     await this.syncStateFromFile();
 
@@ -435,8 +560,35 @@ export class LoopController {
    * Calls InnerLoop.run() which invokes PhaseLoop.run() for each stage,
    * executing maker → checker → gate → optimizer cycle.
    */
-  private async nextV12(currentStage?: string): Promise<LoopResponse<{ stage: string; progress: string; next_action: NextAction }>> {
+  private async nextV12(currentStage?: string): Promise<LoopResponse<{ stage: string; progress: string; next_action: NextAction; awaitingAction?: NextAction }>> {
     const stage = (currentStage || this.stateMachine.getCurrentStage()) as Stage;
+
+    // ── CP1 drift detection: if PRD/contract changed out-of-band, force
+    //    back to the open stage to regenerate. spec-superflow pattern. ──
+    if (this.driftDetected && stage !== 'open') {
+      this.driftDetected = false;
+      this.stateMachine.setStageStatus(stage, 'blocked');
+      this.stateMachine.setStageStatus('open', 'in_progress');
+      this.stateMachine.loadState({ current_stage: 'open' });
+      return this.buildResponse('open', {
+        tool: 'aza_prd_review', action: 'refine',
+        reason: 'Drift detected: PRD or contract changed out-of-band. Returning to open stage to regenerate.',
+      }, false, 'inner');
+    }
+
+    // ── CP1 DP gate: enforce Decision Point prerequisites before entering a
+    //    new stage. The 'open' stage is exempt (it's the entry point — DP-0
+    //    is init→open and hasn't had a chance to be recorded yet). Stages
+    //    already in_progress are also exempt (already lawfully entered). ──
+    const stageInfo = this.stateMachine.getStageInfo(stage);
+    if (stage !== 'open' && stageInfo.status === 'pending') {
+      if (!this.dpRegistry.canEnterStage(stage)) {
+        return this.buildResponse(stage, {
+          tool: 'aza_loop_next', action: 'escalate',
+          reason: `DP gate blocked: stage "${stage}" requires its Decision Point to be passed first. Complete the prior stage via aza_loop_next.`,
+        }, true);
+      }
+    }
 
     // Hard stop check
     if (this.hardStop.isStopped()) {
@@ -468,16 +620,42 @@ export class LoopController {
       }, true);
     }
 
-    // V12: Check 3-Strike system
+    // V12: Check 3-Strike system — spec-superflow "3+ fail = question architecture"
+    // pattern. Instead of a generic hard-stop we proactively bounce back to
+    // the design stage and ask the agent to re-evaluate its approach.
     if (this.strikeSystem.isHardStop()) {
-      this.hardStop.stop('strikes_exceeded', `3-Strike hard stop: ${this.strikeSystem.getStrikeCount()} strikes`, this.stateMachine.getState().iteration);
-      return this.buildResponse(stage, {
+      this.hardStop.stop('strikes_exceeded', `3-Strike: ${this.strikeSystem.getStrikeCount()} strikes`, this.stateMachine.getState().iteration);
+
+      // T16: architecture question — move the design stage back to in_progress
+      // and put the current stage into a blocked state, then return an
+      // escalate action that points at aza_task_design as the next move.
+      this.stateMachine.setStageStatus('design', 'in_progress');
+      this.stateMachine.setStageStatus(stage, 'blocked');
+      this.stateMachine.loadState({ current_stage: 'design' });
+
+      // T14: also trigger the break-loop knowledge sedimentation at strike 3
+      // so future iterations can avoid the same root cause. Failures are
+      // non-fatal — we never let break-loop break the hard-stop itself.
+      try {
+        const { breakLoop } = await import('../L9_knowledge/break-loop');
+        await breakLoop({
+          stage,
+          iteration: this.stateMachine.getState().iteration,
+          error: `3-Strike hard stop: ${this.strikeSystem.getStrikeCount()} strikes`,
+          lastAction: { tool: 'aza_loop_next', action: 'next', reason: '3-strike escalation' },
+          strikeCount: this.strikeSystem.getStrikeCount(),
+        }, this.configLoopOptions.azaDir || '.aza');
+      } catch {
+        // best-effort
+      }
+
+      return this.buildResponse('design', {
         tool: 'aza_loop_next', action: 'escalate',
-        reason: `3-Strike hard stop: ${this.strikeSystem.getStrikeCount()} strikes exceeded`,
+        reason: `3-Strike: architecture questioned after ${this.strikeSystem.getStrikeCount()} strikes — returning to design stage. Run aza_task_design to revise the approach.`,
       }, true);
     }
 
-    // ── V12 Core: Call InnerLoop.run() to execute three-level loop ──
+    // ── V16 Core: Call InnerLoop.runStage() for single-stage scheduling ──
     const innerState = this.stateMachine.getInnerLoopState();
     const storyId = innerState.current_story || `STORY-${stage.toUpperCase()}`;
 
@@ -516,20 +694,30 @@ export class LoopController {
       knowledgeEntries,
     });
 
-    // Execute InnerLoop for this stage
-    const innerResult = await this.innerLoop.run(storyId, this.handlerProvider);
+    // V16: Execute a single stage via InnerLoop.runStage()
+    const innerStageResult = await this.innerLoop.runStage(stage, storyId, this.handlerProvider);
 
-    if (innerResult.success) {
+    // V16: If awaiting agent action, return it as next_action (事前指令)
+    // V18: Pass awaitingAction as 5th param so it's propagated in data.awaitingAction
+    if (innerStageResult.awaitingAction) {
+      return this.buildResponse(stage, {
+        tool: innerStageResult.awaitingAction.tool,
+        action: innerStageResult.awaitingAction.action,
+        reason: innerStageResult.awaitingAction.reason || `Awaiting LLM to execute ${innerStageResult.awaitingAction.tool} for stage "${stage}"`,
+      }, false, 'inner', innerStageResult.awaitingAction);
+    }
+
+    if (innerStageResult.success) {
       // Stage succeeded → record progress
       this.circuitBreaker.recordProgress('inner');
       this.markLedgerProgress();
 
-      if (innerResult.completed) {
-        // V12: Evaluate CompletionGate before allowing stop
-        // Check attestation from state machine
-        const state = this.stateMachine.getState();
-        const attestationVerified = state.attestation?.verified ?? false;
-        const allCompleted = Object.values(state.stages).every(s => s.status === 'completed');
+      // Check if all stages completed
+      const state = this.stateMachine.getState();
+      const allCompleted = Object.values(state.stages).every(s => s.status === 'completed');
+      const attestationVerified = state.attestation?.verified ?? false;
+
+      if (allCompleted && stage === 'archive') {
         const gateResult = this.completionGate.evaluate({
           gated_mode_enabled: true,
           has_in_progress_stage: false,
@@ -547,7 +735,6 @@ export class LoopController {
             reason: 'All stages complete — project archived',
           });
         } else {
-          // CompletionGate blocked — continue looping
           return this.buildResponse(stage, {
             tool: 'aza_loop_next', action: 'refine',
             reason: `CompletionGate blocked: ${gateResult.blockedReason}`,
@@ -556,9 +743,12 @@ export class LoopController {
       }
 
       // Advance to next stage
-      const nextStage = innerResult.current_stage as Stage;
-      if (nextStage && nextStage !== stage) {
+      const STAGES: Stage[] = ['open', 'design', 'build', 'verify', 'archive'];
+      const idx = STAGES.indexOf(stage);
+      if (idx >= 0 && idx < STAGES.length - 1) {
+        const nextStage = STAGES[idx + 1]!;
         this.stateMachine.setStageStatus(stage, 'completed');
+        this.stateMachine.setStageStatus(nextStage, 'in_progress');
         this.stateMachine.setPhaseLoopState({
           current: nextStage,
           iteration: 0,
@@ -567,21 +757,20 @@ export class LoopController {
         return this.buildResponse(nextStage, this.getStageEntryAction(nextStage), false, 'inner');
       }
 
-      // Same stage, next iteration
+      // archive stage — stay on same stage, next iteration
       return this.buildResponse(stage, this.getStageEntryAction(stage), false, 'inner');
     }
 
     // Stage failed
-    if (innerResult.escalated) {
-      this.circuitBreaker.recordFailure('inner', innerResult.escalation_reason || 'Stage failed');
+    if (innerStageResult.escalated) {
+      this.circuitBreaker.recordFailure('inner', innerStageResult.escalation_reason || 'Stage failed');
       return this.buildResponse(stage, {
         tool: 'aza_loop_next', action: 'escalate',
-        reason: innerResult.escalation_reason || `Stage "${stage}" escalated`,
+        reason: innerStageResult.escalation_reason || `Stage "${stage}" escalated`,
       }, false, 'inner');
     }
 
-    // Gate failed but not escalated → return refine action
-    const phaseState = this.stateMachine.getPhaseLoopState();
+    // Not done (needs retry) — return refine action
     this.circuitBreaker.recordFailure('phase', `Stage "${stage}" gate check failed`);
 
     // Check phase-level stagnation
@@ -596,7 +785,7 @@ export class LoopController {
 
     return this.buildResponse(stage, {
       tool: 'aza_task_implement', action: 'refine',
-      reason: `Stage "${stage}" needs refinement (phase iteration ${phaseState.iteration})`,
+      reason: `Stage "${stage}" needs refinement (iteration ${innerStageResult.iteration})`,
     }, false, 'phase');
   }
 
@@ -649,6 +838,10 @@ export class LoopController {
     if (guardResult.allowed) {
       this.stateMachine.setStageStatus(stage as any, 'completed');
       if (stage === 'archive') {
+        // v13 — P1.1: notify the worker scheduler that the loop is
+        // done. This fans out to `on-completion` workers (document,
+        // audit, benchmark) which produce the final summary reports.
+        this.notifyCompletion();
         return this.buildResponse(stage, {
           tool: 'aza_loop_next', action: 'done', reason: 'All stages complete',
         });
@@ -677,6 +870,9 @@ export class LoopController {
       const repeated = this.deadlockDetector.getRepeatedAction();
       if (repeated) {
         this.strikeSystem.record('deadlock_detected', `Deadlock: repeated ${repeated.tool}:${repeated.action}`, this.stateMachine.getState().iteration);
+        // v13 — P1.1: notify the worker scheduler of the strike so
+        // `on-strike` workers (deepdive) produce a root-cause report.
+        this.notifyStrike(`deadlock_detected: ${repeated.tool}:${repeated.action}`);
         this.deadlockDetector.clear();
       }
     }
@@ -838,12 +1034,22 @@ export class LoopController {
     nextAction: NextAction,
     isHardStop = false,
     loopLevel: 'outer' | 'inner' | 'phase' = 'phase',
-  ): LoopResponse<{ stage: string; progress: string; next_action: NextAction }> {
+    /** V18: When non-null, this is the V16 pre-action instruction for the LLM
+     *  to execute a specific tool (e.g. aza_task_implement) before calling
+     *  next() again. Propagated into `data.awaitingAction` so AutoLoopDriver
+     *  and AutoLoopScheduler can detect it. */
+    awaitingAction?: NextAction,
+  ): LoopResponse<{ stage: string; progress: string; next_action: NextAction; awaitingAction?: NextAction }> {
     const state = this.stateMachine.getState();
     const phaseState = this.stateMachine.getPhaseLoopState();
     return {
       success: !isHardStop,
-      data: { stage, progress: state.progress, next_action: nextAction },
+      data: {
+        stage,
+        progress: state.progress,
+        next_action: nextAction,
+        ...(awaitingAction ? { awaitingAction } : {}),
+      },
       next_action: nextAction,
       error: isHardStop ? nextAction.reason : undefined,
       metadata: {

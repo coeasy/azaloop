@@ -1,0 +1,76 @@
+# v13 — P5.1: Sample orchestrator.yaml
+#
+# This file demonstrates how to define a multi-agent pipeline that runs
+# through the SPARC 5-phase gate system.
+#
+# Place this file at `.aza/orchestrator.yaml` to override the default
+# execution order.
+
+name: "azaloop-default-pipeline"
+description: "Default PRD → OpenSpec → Build → Verify → Archive pipeline"
+
+stages:
+  - id: specification
+    name: "PRD specification"
+    sparcPhase: specification
+    minScore: 0.6
+    steps:
+      - id: "1.1"
+        tool: "aza_prd_review"
+        action: "review"
+        args: {}
+        depends_on: []
+      - id: "1.2"
+        tool: "aza_prd_approve"
+        action: "approve"
+        args: {}
+        depends_on: ["1.1"]
+
+  - id: pseudocode
+    name: "Design pseudocode"
+    sparcPhase: pseudocode
+    minScore: 0.6
+    steps:
+      - id: "2.1"
+        tool: "aza_task_design"
+        action: "design"
+        args: {}
+        depends_on: ["1.2"]
+
+  - id: architecture
+    name: "Architecture"
+    sparcPhase: architecture
+    minScore: 0.7
+    steps:
+      - id: "3.1"
+        tool: "aza_doc_generate"
+        action: "architecture"
+        args: {}
+        depends_on: ["2.1"]
+
+  - id: refinement
+    name: "Build / TDD refinement"
+    sparcPhase: refinement
+    minScore: 0.8
+    steps:
+      - id: "4.1"
+        tool: "aza_task_implement"
+        action: "implement"
+        args: {}
+        depends_on: ["3.1"]
+      - id: "4.2"
+        tool: "aza_quality_check"
+        action: "check"
+        args: {}
+        depends_on: ["4.1"]
+
+  - id: completion
+    name: "Verify + Archive"
+    sparcPhase: completion
+    minScore: 0.9
+    steps:
+      - id: "5.1"
+        tool: "aza_doc_generate"
+        action: "archive"
+        args: {}
+        depends_on: ["4.2"]

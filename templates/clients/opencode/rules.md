@@ -31,3 +31,24 @@ alwaysApply: true
 - 不得跳过 `next_action` 链（那会打破全自动循环）。
 - 不得在测试通过前宣称完成（Completion Gate 会阻止假完成）。
 - 不得引入模拟流程：所有质量门禁必须运行真实工具（tsc / vitest / 扫描）。
+
+## V17 后台自动循环（推荐）
+
+用户确认 PRD 后，使用 `aza_auto_loop` 工具自动执行整个循环：
+
+1. **后台自动循环**（推荐）：调用 `aza_auto_loop`（action="auto"）启动后台调度器
+   - 调度器自动调用 `loopController.next()` 推进循环
+   - 当需要 LLM 执行工具时（如 `aza_task_implement`），调度器自动暂停
+   - LLM 执行完工具后，调用 `aza_auto_loop`（action="report_tool", tool_name="..."）通知调度器继续
+   - 重复直到完成
+2. **单步模式**：调用 `aza_auto_loop`（action="step"）执行一步，返回 `next_action` 和 `awaitingAction`
+3. **全自动模式**：调用 `aza_auto_loop`（action="full"）执行完整循环直到完成
+
+## 工具调用链（主体链路）
+
+```
+aza_context_calibrate → aza_prd_review → aza_prd_approve → aza_auto_loop(auto) →
+  [调度器自动调用] aza_loop_next → aza_task_design → aza_loop_next →
+  aza_task_implement → aza_loop_next → aza_quality_check →
+  aza_loop_next → aza_doc_generate → done
+```

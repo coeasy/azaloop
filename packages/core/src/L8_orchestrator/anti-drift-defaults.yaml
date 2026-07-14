@@ -1,0 +1,46 @@
+# AzaLoop ANTI_DRIFT Defaults (v14)
+#
+# Inspired by ruvnet/ruflo anti-drift: the platform forbids the user
+# from weakening the safety guarantees that the autonomous loop relies
+# on. The defaults below are the minimum bar; a client configuration
+# that disables any of these is rejected by TopologySelector.
+#
+# Schema:
+#   lock_<feature>: true  — feature cannot be disabled
+#   forbid_<construct>: list of strings forbidden in code
+#
+# Loading: `loadAntiDriftDefaults(azaDir)` returns this config parsed
+# into a typed object. Used by L8 TopologySelector before recommending
+# a topology.
+
+lock_hard_gate: true
+lock_recursion_guard: true
+lock_circuit_breaker: true
+lock_tdd_iron_law: true
+lock_verification_phrases: true
+lock_audit_jsonl: true
+lock_state_checksum: true
+
+forbid_constructs:
+  - eval
+  - with
+  - Function  # `new Function(...)` constructor
+
+forbid_modules:
+  - moment
+  - lodash
+  - request
+  - bluebird
+
+# Score weights used by the topology selector to ensure a safe
+# recommendation. The selector refuses to lower these below the
+# floor even if a client config asks for it.
+topology:
+  min_raft_threshold: 5  # teamSize >= 5 uses raft consensus
+  max_parallel_uncoordinated: 3  # > 3 parallel tasks need hierarchy
+
+# Token budget rules
+budget:
+  warn_at_pct: 80
+  reject_at_pct: 100
+  default_budget: 50000

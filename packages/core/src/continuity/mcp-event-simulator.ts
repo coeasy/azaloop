@@ -11,6 +11,64 @@ import * as path from 'path';
 import type { NextAction } from '@azaloop/shared';
 
 /**
+ * A single error tracked by the in-memory ErrorTracker.
+ * Useful for debugging silent failures (O-10).
+ */
+export interface TrackedError {
+  category: string;
+  message: string;
+  stack?: string;
+  timestamp: string;
+}
+
+/**
+ * Lightweight in-memory ring buffer of recent errors. Replaces the silent
+ * `try { ... } catch { /* best-effort *\/ }` pattern so debuggers can see
+ * what failed and why. Capped at 50 entries to bound memory.
+ *
+ * Reference: O-10 in the azaloop-pipeline-unification plan.
+ */
+export class ErrorTracker {
+  private maxSize: number;
+  private errors: TrackedError[] = [];
+
+  constructor(maxSize: number = 50) {
+    this.maxSize = maxSize;
+  }
+
+  track(category: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : undefined;
+    const entry: TrackedError = {
+      category,
+      message,
+      stack,
+      timestamp: new Date().toISOString(),
+    };
+    this.errors.push(entry);
+    if (this.errors.length > this.maxSize) {
+      this.errors.splice(0, this.errors.length - this.maxSize);
+    }
+  }
+
+  getRecent(): TrackedError[] {
+    return [...this.errors];
+  }
+
+  getByCategory(category: string): TrackedError[] {
+    return this.errors.filter(e => e.category === category);
+  }
+
+  clear(): void {
+    this.errors = [];
+  }
+
+  get size(): number {
+    return this.errors.length;
+  }
+}
+
+/**
  * Result of a single event simulation step.
  */
 export interface EventSimulationResult {
@@ -57,6 +115,8 @@ export class MCPEventSimulator {
   private workspaceJournal: WorkspaceJournal;
   /** Loaded security policy (from policy.yaml or default) */
   private policy: SecurityPolicy;
+  /** O-10: in-memory ring buffer of swallowed best-effort errors. */
+  private errorTracker: ErrorTracker = new ErrorTracker(50);
 
   /**
    * @param eventBus       - EventBus used to emit simulated Hook events.
@@ -214,7 +274,10 @@ export class MCPEventSimulator {
         summary: `Tool ${toolName} executed successfully`,
         success: true,
       });
-    } catch { /* best-effort: ledger write is non-fatal */ }
+    } catch (err) {
+      // best-effort: ledger write is non-fatal, but track it (O-10).
+      this.errorTracker.track('run_ledger_write', err);
+    }
 
     // Update STATE — increment iteration counter.
     await this.stateManager.incrementIteration();
@@ -280,7 +343,10 @@ export class MCPEventSimulator {
         work_summary: `Session ended at stage ${state.pipeline.current_stage}, iteration ${state.loop.iteration}, progress ${state.loop.progress}`,
         iteration: state.loop.iteration,
       });
-    } catch { /* best-effort: journal archive is non-fatal */ }
+    } catch (err) {
+      // best-effort: journal archive is non-fatal, but track it (O-10).
+      this.errorTracker.track('workspace_journal_archive', err);
+    }
 
     // Write a full RESUME with all current state fields.
     await this.resumeGenerator.generate(this.stateManager, {
@@ -328,6 +394,18 @@ export class MCPEventSimulator {
       action: `continue_${stage}`,
       reason: `Stage "${stage}" in progress, iteration ${state.loop.iteration}, progress ${state.loop.progress}`,
     };
+  }
+
+  /**
+   * O-10: public accessor for the in-memory error tracker. Exposed so
+   * `aza_audit` and other diagnostic tools can surface silent failures.
+   */
+  getRecentErrors(): TrackedError[] {
+    return this.errorTracker.getRecent();
+  }
+
+  getErrorsByCategory(category: string): TrackedError[] {
+    return this.errorTracker.getByCategory(category);
   }
 
   /**

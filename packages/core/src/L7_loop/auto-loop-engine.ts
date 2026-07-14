@@ -1,4 +1,5 @@
 import { LoopController, type LoopControllerOptions } from './loop-controller';
+import { AutoLoopDriver, type AutoLoopDriverOptions, type LoopCompleteResult, type StepResult } from './auto-loop-driver';
 import { OuterLoop, type OuterLoopResult, createDefaultStoryProvider, createDefaultHumanGate, createDefaultCommit } from './outer-loop';
 import { HeartbeatManager, type Heartbeat } from '../state/heartbeat';
 import { StateManager } from '../state/state-manager';
@@ -6,6 +7,11 @@ import { ResumeGenerator } from '../continuity/resume-generator';
 import { CatchupProtocol } from '../continuity/catchup-protocol';
 import { ProjectMemory } from '../L2_memory/project-memory';
 import { LongTermMemory } from '../L2_memory/long-term-memory';
+import {
+  WorkerScheduler,
+  DEFAULT_TRIGGERS,
+  buildDefaultRegistry,
+} from '../L0_platform/workers';
 import type { LoopResponse, NextAction } from '@azaloop/shared';
 
 export interface AutoLoopEngineOptions {
@@ -21,6 +27,10 @@ export interface AutoLoopEngineOptions {
   enableAutoLoop?: boolean;
   /** Heartbeat stale threshold in ms (default: 300000 = 5 minutes) */
   heartbeatStaleThresholdMs?: number;
+  /** v13 — Worker scheduler heartbeat in ms. Default 270_000 (5 min). */
+  workerHeartbeatMs?: number;
+  /** v13 — Disable the background worker scheduler. */
+  disableWorkerScheduler?: boolean;
 }
 
 export interface AutoLoopState {
@@ -46,12 +56,15 @@ export interface AutoLoopState {
  */
 export class AutoLoopEngine {
   private loopController: LoopController;
+  private autoLoopDriver: AutoLoopDriver;
   private heartbeatManager: HeartbeatManager;
   private stateManager: StateManager;
   private resumeGenerator: ResumeGenerator;
   private catchupProtocol: CatchupProtocol | null = null;
   private projectMemory: ProjectMemory;
   private longTermMemory: LongTermMemory;
+  /** v13 — 12 ruflo workers + 270s heartbeat (P1.1: WorkerScheduler wiring). */
+  private workerScheduler: WorkerScheduler | null = null;
   private options: Required<AutoLoopEngineOptions>;
   private state: AutoLoopState;
 
@@ -63,6 +76,8 @@ export class AutoLoopEngine {
       maxIterations: options.maxIterations ?? 50,
       enableAutoLoop: options.enableAutoLoop ?? true,
       heartbeatStaleThresholdMs: options.heartbeatStaleThresholdMs ?? 300000,
+      workerHeartbeatMs: options.workerHeartbeatMs ?? WorkerScheduler.HEARTBEAT_MS,
+      disableWorkerScheduler: options.disableWorkerScheduler ?? false,
     };
 
     this.stateManager = new StateManager(this.options.azaDir);
@@ -77,6 +92,33 @@ export class AutoLoopEngine {
       enableOuterLoop: this.options.enableAutoLoop,
       maxIterations: this.options.maxIterations,
     });
+
+    // v15 — P1-1: Create AutoLoopDriver to delegate loop execution.
+    // AutoLoopEngine handles lifecycle (heartbeat, catchup, workers);
+    // AutoLoopDriver handles the loop execution (step, sentinel, PRD gate);
+    // LoopController handles state machine and tool routing.
+    this.autoLoopDriver = new AutoLoopDriver(this.loopController, {
+      maxIterations: this.options.maxIterations,
+      enableSentinelDetection: true,
+      enableAutoSync: true,
+      onPrdReview: async () => ({ approved: true }),
+      onEscalate: async (reason, stage) => {
+        this.state.errors.push(`Escalated at ${stage}: ${reason}`);
+      },
+    });
+
+    // v13 — Build the 12-worker registry + scheduler if not disabled.
+    if (!this.options.disableWorkerScheduler) {
+      const registry = buildDefaultRegistry();
+      this.workerScheduler = new WorkerScheduler({
+        azaDir: this.options.azaDir,
+        stateManager: this.stateManager,
+        registry,
+        heartbeatMs: this.options.workerHeartbeatMs,
+      });
+      this.workerScheduler.registerTriggers(DEFAULT_TRIGGERS);
+      this.loopController.setWorkerScheduler(this.workerScheduler);
+    }
 
     this.state = {
       is_running: false,
@@ -113,6 +155,14 @@ export class AutoLoopEngine {
       // 4. 配置 OuterLoop 回调
       this.configureOuterLoop();
 
+      // v13 — P1.1: start the worker scheduler. The 12 ruflo workers
+      // begin observing the loop. Periodic `every-270s` workers are
+      // scheduled; event-driven workers fire on stage advance / strike /
+      // completion via the loop controller fan-out.
+      if (this.workerScheduler) {
+        this.workerScheduler.start();
+      }
+
       this.state.is_running = true;
       this.state.last_heartbeat = new Date().toISOString();
 
@@ -132,6 +182,9 @@ export class AutoLoopEngine {
 
   /**
    * 执行一步循环
+   *
+   * v15 — P1-1: Delegates to AutoLoopDriver.step() for core loop execution,
+   * then enriches the result with engine-level state (heartbeat, STATUS.md, journal).
    */
   async step(): Promise<LoopResponse<{ stage: string; progress: string; next_action: NextAction }>> {
     // 更新心跳
@@ -139,19 +192,86 @@ export class AutoLoopEngine {
       iteration: this.state.iteration + 1,
     });
 
-    // 执行循环
-    const result = await this.loopController.next();
+    // v15 — Delegate to AutoLoopDriver for sentinel-aware, PRD-gate-aware step execution
+    const stepResult = await this.autoLoopDriver.step();
 
     // 更新状态
-    this.state.iteration++;
-    this.state.progress = result.metadata?.progress || this.state.progress;
-    this.state.current_story = result.data?.stage || this.state.current_story;
+    this.state.iteration = stepResult.iteration;
+    this.state.current_story = stepResult.stage;
+    this.state.progress = `${Math.round((stepResult.iteration / this.options.maxIterations) * 100)}%`;
+
+    // Build the loop result from the driver result
+    // V18: Explicitly type result to match the function's return type
+    const result: LoopResponse<{ stage: string; progress: string; next_action: NextAction }> = {
+      success: true,
+      data: {
+        stage: stepResult.stage,
+        progress: this.state.progress,
+        next_action: stepResult.nextAction ?? { tool: 'aza_loop_next', action: 'next', reason: 'Continue' },
+      },
+      next_action: stepResult.nextAction ?? { tool: 'aza_loop_next', action: 'next', reason: 'Continue' },
+      metadata: {
+        iteration: stepResult.iteration,
+        progress: this.state.progress,
+        stage: stepResult.stage,
+      },
+    };
+
+    // v13 — P4.1: write the live STATUS.md snapshot so the user can
+    // observe the loop's progress. Best-effort: never throws.
+    try {
+      const { writeStatusSnapshot } = await import('../L2_memory/status-snapshot');
+      const fs = await import('fs');
+      const path = await import('path');
+      const openChanges: string[] = [];
+      const openspecDir = path.join(this.options.azaDir, 'openspec', 'changes');
+      if (fs.existsSync(openspecDir)) {
+        for (const f of fs.readdirSync(openspecDir)) {
+          if (f !== 'archive') openChanges.push(f);
+        }
+      }
+      const adrDirPath = path.join(this.options.azaDir, 'docs', 'adr');
+      if (fs.existsSync(adrDirPath)) {
+        for (const f of fs.readdirSync(adrDirPath).filter((f) => f.endsWith('.md'))) {
+          openChanges.push(`adr/${f.replace(/\.md$/, '')}`);
+        }
+      }
+      writeStatusSnapshot(this.options.azaDir, {
+        currentStage: this.state.current_story ?? 'open',
+        iteration: this.state.iteration,
+        progress: this.state.progress,
+        lastMilestone: `Iteration ${this.state.iteration} complete`,
+        nextAction: stepResult.nextAction?.action ?? 'next',
+        strikes: this.state.errors?.length ?? 0,
+        openChanges,
+        client: this.options.client,
+        model: this.options.model,
+      });
+    } catch {
+      // best-effort — STATUS.md write failure never blocks the loop
+    }
+
+    // v14 — P9.1: auto-append a journal entry on every stage change.
+    try {
+      const { autoAppendJournalEntry } = await import('../L2_memory/workspace-journal');
+      await autoAppendJournalEntry(this.options.azaDir, {
+        stage: this.state.current_story ?? 'open',
+        summary: `Iteration ${this.state.iteration} complete`,
+        iteration: this.state.iteration,
+      });
+    } catch {
+      // best-effort — journal write failure never blocks the loop
+    }
 
     return result;
   }
 
   /**
    * 运行完整循环直到完成或停止
+   *
+   * v15 — P1-1: Delegates to AutoLoopDriver.runFull() which handles
+   * sentinel detection, PRD review gates, and escalation automatically.
+   * Engine-level lifecycle (start heartbeat, catchup, workers) is preserved.
    */
   async runFullLoop(): Promise<{
     completed: boolean;
@@ -161,40 +281,21 @@ export class AutoLoopEngine {
   }> {
     await this.start();
 
-    let result: LoopResponse;
-    let maxIterations = this.options.maxIterations;
+    const driverResult = await this.autoLoopDriver.runFull();
 
-    while (maxIterations > 0) {
-      result = await this.step();
-
-      // 检查是否完成
-      if (result.next_action?.action === 'done') {
-        return {
-          completed: true,
-          total_iterations: this.state.iteration,
-          state: { ...this.state },
-          result,
-        };
-      }
-
-      // 检查是否需要停止
-      if (result.next_action?.action === 'stop' || 
-          result.next_action?.action === 'escalate') {
-        return {
-          completed: false,
-          total_iterations: this.state.iteration,
-          state: { ...this.state },
-          result,
-        };
-      }
-
-      maxIterations--;
-    }
+    this.state.iteration = driverResult.totalIterations;
+    this.state.current_story = driverResult.finalStage;
+    this.state.progress = driverResult.completed ? '100%' : this.state.progress;
 
     return {
-      completed: false,
-      total_iterations: this.state.iteration,
+      completed: driverResult.completed,
+      total_iterations: driverResult.totalIterations,
       state: { ...this.state },
+      result: {
+        status: this.autoLoopDriver.getStatus(),
+        reason: driverResult.reason,
+        finalStage: driverResult.finalStage,
+      },
     };
   }
 
@@ -204,6 +305,17 @@ export class AutoLoopEngine {
   async stop(): Promise<void> {
     this.state.is_running = false;
     await this.heartbeatManager.clear();
+    // v13 — P1.1: stop the worker scheduler so timers don't keep the
+    // event loop alive. Best-effort: if stop throws we log and proceed
+    // so a leaked worker never blocks loop shutdown.
+    if (this.workerScheduler) {
+      try {
+        await this.workerScheduler.stop();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[AutoLoopEngine] workerScheduler.stop failed: ${msg}`);
+      }
+    }
   }
 
   /**

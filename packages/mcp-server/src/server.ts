@@ -14,6 +14,7 @@
 import { createInterface } from 'readline';
 import { stdin, stdout, stderr } from 'process';
 import { handleToolCall, getToolDefinitions } from './index';
+import { StageWriteGuardError } from '@azaloop/core';
 
 interface JSONRPCRequest {
   jsonrpc?: string;
@@ -105,6 +106,55 @@ async function handleRequest(req: JSONRPCRequest): Promise<JSONRPCResponse> {
         },
       };
     } catch (err: any) {
+      // CP-new-2 fallback: StageWriteGuardError from wrapTool/bridgeCall gets
+      // a structured response with a next_action redirect so the agent can
+      // recover, rather than a generic "Tool call failed".
+      if (err instanceof StageWriteGuardError) {
+        const payload = {
+          success: false,
+          error: err.message,
+          data: null,
+          next_action: {
+            tool: 'aza_loop_next',
+            action: 'refine',
+            reason: `Write blocked in stage "${err.stage}". Use aza_loop_next to advance to a stage where this write is allowed.`,
+          },
+          blocked_file: err.filePath,
+          blocked_stage: err.stage,
+        };
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+            isError: true,
+          },
+        };
+      }
+      // T13 fallback: RecursionGuardError — the agent tried to dispatch
+      // a sub-agent from inside a sub-agent. Return a structured redirect
+      // so it can stop the recursion and recover.
+      if (err && err.name === 'RecursionGuardError') {
+        const payload = {
+          success: false,
+          error: err.message,
+          data: null,
+          next_action: {
+            tool: 'aza_loop_status',
+            action: 'review',
+            reason: `Recursion blocked: tool "${err.tool}" tried to dispatch itself. Stop re-dispatching and let the parent caller finish.`,
+          },
+          recursion: { tool: err.tool, depth: err.depth },
+        };
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+            isError: true,
+          },
+        };
+      }
       return {
         jsonrpc: '2.0',
         id,

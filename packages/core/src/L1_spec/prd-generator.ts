@@ -104,11 +104,20 @@ export class PRDGenerator {
 
   /**
    * Generate a PRD from natural language input.
+   *
+   * Robust to missing `description` — if the caller omits it (the
+   * HARD-GATE minimal-input pattern from T25), we synthesize a
+   * description from the title + structured fields so all downstream
+   * extractors receive a non-empty string.
    */
   generate(input: PRDGenerationInput, options: PRDGeneratorOptions = {}): PRD {
     const now = new Date().toISOString();
-    const complexity = options.complexity || input.complexity || this.inferComplexity(input.description);
-    const productType = options.productType || input.productType || this.detectProductType(input.title, input.description);
+    // Normalize description: fall back to title (or empty) when missing
+    // so the infer/extract pipeline can run without runtime errors.
+    const description = input.description ?? input.title ?? '';
+    const complexity = options.complexity || input.complexity || this.inferComplexity(description);
+    const productType = options.productType || input.productType || this.detectProductType(input.title, description);
+
     const use14Chapters = options.enable_14chapters ?? (complexity === 'L4');
 
     const prd: PRD = {
@@ -117,15 +126,15 @@ export class PRDGenerator {
       version: '1.0.0',
       created_at: now,
       updated_at: now,
-      overview: input.description,
-      goals: this.extractGoals(input.description),
-      target_users: this.extractTargetUsers(input.description, productType),
-      functional_requirements: this.extractFunctionalRequirements(input.description),
-      non_functional_requirements: this.extractNonFunctionalRequirements(input.description),
-      stories: options.auto_stories !== false ? this.generateStories(input.title, input.description, complexity) : [],
+      overview: description,
+      goals: this.extractGoals(description),
+      target_users: this.extractTargetUsers(description, productType),
+      functional_requirements: this.extractFunctionalRequirements(description),
+      non_functional_requirements: this.extractNonFunctionalRequirements(description),
+      stories: options.auto_stories !== false ? this.generateStories(input.title, description, complexity) : [],
       architecture: options.auto_architecture !== false ? this.generateArchitecture(complexity, productType) : [],
       acceptance_criteria: [],
-      risks: this.assessRisks(input.description, input.constraints || [], complexity, productType),
+      risks: this.assessRisks(description, input.constraints || [], complexity, productType),
     };
 
     const parsed = PRDSchema.parse(prd);
@@ -328,9 +337,15 @@ export class PRDGenerator {
 
   /**
    * Infer complexity level from description length and signal keywords.
+   *
+   * Robust to missing/undefined description — falls back to title (or
+   * empty string) so the generator can still produce a PRD when callers
+   * provide only a title + structured fields (the HARD-GATE minimal input
+   * pattern from T25, for example).
    */
-  private inferComplexity(description: string): Complexity {
-    const length = description.length;
+  private inferComplexity(description: string | undefined | null): Complexity {
+    const text = description ?? '';
+    const length = text.length;
     if (length < 100) return 'L1';
     if (length < 500) return 'L2';
     if (length < 2000) return 'L3';

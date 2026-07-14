@@ -83,6 +83,9 @@ const DEFAULT_STATE: State = {
 };
 
 export class StateManager {
+  /** Public — exposes the aza directory so adjacent components (e.g. PRDReviewGate
+   *  writing red_flag_answers.json) can resolve paths without re-deriving. */
+  readonly azaDir: string;
   private statePath: string;
   private checksumPath: string;
   private state: State;
@@ -90,6 +93,7 @@ export class StateManager {
   private lastContentHash?: string;
 
   constructor(azaDir: string) {
+    this.azaDir = azaDir;
     this.statePath = path.join(azaDir, 'STATE.yaml');
     this.checksumPath = path.join(azaDir, 'STATE.CHECKSUM');
     this.contentHashPath = path.join(azaDir, 'STATE.HASH');
@@ -184,8 +188,25 @@ export class StateManager {
     this.state.updated_at = new Date().toISOString();
   }
 
+  /**
+   * V17: Deep merge partial state into current state.
+   * Replaces shallow merge ({ ...this.state, ...partial }) with recursive
+   * deep merge to prevent nested state loss (e.g. pipeline.stages being
+   * overwritten when only pipeline.current_stage changes).
+   *
+   * Uses lodash-style merge: objects are merged recursively, arrays and
+   * primitives are replaced. `updated_at` is always set to current time.
+   *
+   * Falls back to shallow merge if deepMerge fails (defensive).
+   */
   async update(partial: Partial<State>): Promise<State> {
-    this.state = { ...this.state, ...partial, updated_at: new Date().toISOString() };
+    try {
+      this.state = deepMerge(this.state, partial) as State;
+    } catch {
+      // Fallback to shallow merge if deepMerge fails
+      this.state = { ...this.state, ...partial };
+    }
+    this.state.updated_at = new Date().toISOString();
     await this.save();
     return this.state;
   }
@@ -274,6 +295,132 @@ export class StateManager {
    */
   async getCurrentContentHash(): Promise<string> {
     return this.computeContentHash();
+  }
+
+  // ── v14 — P9.3: atomic write + schema migration ─────────────
+
+  /**
+   * v14 — P9.3: atomic file write (tmp + rename). Guards against
+   * half-written STATE.yaml on crash / power loss. Used internally by
+   * `save()` and exposed for callers that write ad-hoc state files.
+   */
+  async atomicWriteState(filePath: string, content: string): Promise<void> {
+    await fs.mkdir(path.dirname(filePath), { recursive: true }).catch(() => {});
+    const tmp = filePath + '.tmp';
+    await fs.writeFile(tmp, content, 'utf8');
+    await fs.rename(tmp, filePath);
+  }
+
+  /**
+   * v14 — P9.3: schema version of the current in-memory state. Bump
+   * the value here whenever `StateSchema` changes in a non-backward-
+   * compatible way and add a `state/migrations/v{N}-to-v{N+1}.ts`
+   * transformer.
+   */
+  static readonly CURRENT_STATE_VERSION = 2;
+
+  /**
+   * v14 — P9.3: read the `schema_version` written in STATE.yaml.
+   * Falls back to 1 when the field is absent.
+   */
+  private readSchemaVersion(state: Record<string, unknown>): number {
+    const v = (state as { schema_version?: unknown }).schema_version;
+    if (typeof v === 'number' && Number.isInteger(v) && v > 0) return v;
+    return 1;
+  }
+
+  /**
+   * v14 — P9.3: chain-load migration transformers in order, applying
+   * each to the in-memory state. Transformers live in
+   * `state/migrations/v{n}-to-v{n+1}.ts` and export a default function
+   * `(state) => state`. Migration is forward-only.
+   */
+  async migrateState(state: Record<string, unknown>, fromVersion: number, toVersion: number): Promise<Record<string, unknown>> {
+    if (fromVersion >= toVersion) return state;
+    let current = { ...state };
+    for (let v = fromVersion; v < toVersion; v++) {
+      try {
+        // Dynamic import so vitest's transform pipeline can pick up
+        // the .ts migration files.
+        const mod = (await import(`./migrations/v${v}-to-v${v + 1}`)) as {
+          default?: (s: Record<string, unknown>) => Record<string, unknown>;
+        };
+        const transformer = mod.default ?? (mod as unknown as (s: Record<string, unknown>) => Record<string, unknown>);
+        if (typeof transformer !== 'function') {
+          throw new Error(`migration v${v}-to-v${v + 1} does not export a function`);
+        }
+        current = transformer(current);
+      } catch (err) {
+        const e = err as NodeJS.ErrnoException & { code?: string };
+        if (e.code === 'MODULE_NOT_FOUND' || (err as Error).message.includes('Cannot find module')) {
+          throw new Error(
+            `No migration available for v${v} → v${v + 1}. ` +
+              `Create packages/core/src/state/migrations/v${v}-to-v${v + 1}.ts`,
+          );
+        }
+        throw err;
+      }
+    }
+    (current as { schema_version?: number }).schema_version = toVersion;
+    return current;
+  }
+
+  /**
+   * v14 — P9.3: load STATE.yaml, run pending migrations, persist the
+   * migrated state. Backs up the original to STATE.yaml.bak on the
+   * first migration.
+   *
+   * Reads the raw YAML (not the Zod-parsed `State`) so that fields not
+   * declared in `StateSchema` (such as `schema_version`) survive into
+   * the migration pipeline.
+   */
+  async loadWithMigration(): Promise<State> {
+    // 1) Ensure STATE.yaml exists (creates a default if missing).
+    await this.load();
+    // 2) Read the raw file and pull out the schema_version.
+    let rawState: Record<string, unknown> = {};
+    try {
+      const content = await fs.readFile(this.statePath, 'utf8');
+      const parsed = yaml.load(content);
+      if (parsed && typeof parsed === 'object') {
+        rawState = parsed as Record<string, unknown>;
+      }
+    } catch {
+      rawState = this.state as unknown as Record<string, unknown>;
+    }
+    const version = this.readSchemaVersion(rawState);
+    const target = StateManager.CURRENT_STATE_VERSION;
+    if (version >= target) {
+      // Re-parse to make sure callers see the latest in-memory state.
+      this.state = StateSchema.parse(rawState);
+      return this.state;
+    }
+    try {
+      const migrated = await this.migrateState(rawState, version, target);
+      // Use a passthrough schema to keep `schema_version` and any
+      // forward-compat fields the migration added.
+      const passthrough = StateSchema.passthrough();
+      this.state = passthrough.parse(migrated) as State;
+      // Back up the original (only on the first migration in this run).
+      try {
+        const bakPath = this.statePath + '.bak';
+        await fs.copyFile(this.statePath, bakPath);
+      } catch {
+        // best-effort
+      }
+      // Save with passthrough so schema_version + extra fields persist.
+      const content = yaml.dump(
+        { schema_version: target, ...(migrated as object) },
+        { indent: 2 },
+      );
+      await this.atomicWriteState(this.statePath, content);
+      return this.state;
+    } catch (err) {
+      // Migration failure should not brick the workspace — log and
+      // continue with the un-migrated state.
+      console.warn(`[StateManager] migration v${version} → v${target} failed: ${(err as Error).message}`);
+      return this.state;
+    }
   }
 }
 
@@ -385,4 +532,51 @@ export class AuditLog {
     const all = await this.load();
     return all.slice(-limit);
   }
+}
+
+// ── V17: deepMerge utility ──
+
+/**
+ * V17: Recursive deep merge — lodash-style object merging.
+ *
+ * Merges `source` into `target` recursively. Arrays and primitives in
+ * `source` replace those in `target`. Objects are merged at each level.
+ * Returns a new object (does not mutate either argument).
+ *
+ * Used by StateManager.update() to prevent nested state loss.
+ */
+export function deepMerge<T extends Record<string, unknown>>(target: T, source: Partial<T>): T {
+  const output = { ...target };
+  for (const key of Object.keys(source) as (keyof T)[]) {
+    const srcVal = source[key];
+    const tgtVal = target[key];
+
+    if (srcVal === undefined) {
+      continue;
+    }
+
+    // Both are plain objects → recurse
+    if (
+      isPlainObject(tgtVal) &&
+      isPlainObject(srcVal)
+    ) {
+      output[key] = deepMerge(
+        tgtVal as unknown as Record<string, unknown>,
+        srcVal as unknown as Record<string, unknown>,
+      ) as unknown as T[typeof key];
+    } else {
+      // Primitives, arrays, null → replace
+      output[key] = srcVal as T[typeof key];
+    }
+  }
+  return output;
+}
+
+/**
+ * Check if a value is a plain object (not array, null, Date, etc.).
+ */
+function isPlainObject(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (Array.isArray(value)) return false;
+  return typeof value === 'object' && value.constructor === Object;
 }

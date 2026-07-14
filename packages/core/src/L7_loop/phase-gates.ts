@@ -1,4 +1,7 @@
 import type { Stage } from './state-machine';
+import { checkTddIronLawStrict } from '../L4_discipline/tdd-iron-law';
+// v13 — P6.2: import verification phrases detector
+import { checkVerificationPhrases } from '../L4_discipline/verification-phrases';
 
 /**
  * Quality gate check result for a single criterion within a phase.
@@ -9,7 +12,13 @@ export interface GateCheckResult {
   /** Human-readable description of the check result. */
   detail: string;
   /** Metrics or values produced by the check (e.g. issue counts). */
-  metrics?: Record<string, number>;
+  metrics?: Record<string, number | string | string[]>;
+  /**
+   * v13 — P1.2: when true, the check is a HARD-BLOCK — callers should
+   * record a strike and refuse to advance the stage. Used by the TDD
+   * Iron Law check when an anti-pattern phrase is detected.
+   */
+  strike?: boolean;
 }
 
 /**
@@ -254,21 +263,52 @@ const verifyGate: PhaseGate = {
         if (!output) {
           return { passed: true, detail: 'No verify output to scan (non-blocking)', metrics: { phrase_count: 0 } };
         }
-        let found = false;
-        for (const pattern of TDD_IRON_LAW_STOP_PHRASES) {
-          if (pattern.test(output)) {
-            found = true;
-            break;
-          }
-        }
-        if (found) {
+        // v13 — P1.2: use the strict TDD Iron Law check from
+        // `L4_discipline/tdd-iron-law.ts` so the Iron Law phrase list
+        // and the STOP phrase list are scanned together. This avoids
+        // the previous double-definition that left some phrases
+        // unchecked in the verify gate.
+        const strict = checkTddIronLawStrict(output);
+        if (strict.strike) {
+          const firstPhrase = strict.matches[0]?.phrase ?? 'unknown';
+          const sources = strict.matches.map((m) => m.source);
+          const metrics: Record<string, number | string | string[]> = {
+            phrase_count: strict.matches.length,
+            phrase: firstPhrase,
+            sources,
+          };
           return {
             passed: false,
-            detail: `TDD Iron Law STOP: anti-pattern phrase detected`,
-            metrics: { phrase_count: 1 },
+            // Mark strike: true so callers can wire the strike system.
+            strike: true,
+            detail: `TDD Iron Law HARD-BLOCK: phrase "${firstPhrase}" detected (${strict.matches.length} match${strict.matches.length === 1 ? '' : 'es'})`,
+            metrics,
           };
         }
         return { passed: true, detail: 'TDD Iron Law passed — no anti-pattern phrases', metrics: { phrase_count: 0 } };
+      },
+    },
+    {
+      // v13 — P6.2: verification phrase detector. Catches the
+      // "looks good" / "should work" / "seems fine" anti-pattern
+      // where an agent claims something is done without evidence.
+      id: 'verification_phrases',
+      label: 'No "looks good" verification anti-pattern',
+      check: (input): GateCheckResult => {
+        const output = input.verify_output ?? '';
+        if (!output) {
+          return { passed: true, detail: 'No verify output to scan (non-blocking)', metrics: { phrase_count: 0 } };
+        }
+        const v = checkVerificationPhrases(output);
+        if (v.violated) {
+          return {
+            passed: false,
+            strike: true,
+            detail: `Verification anti-pattern detected: ${v.phrases.join(', ')}`,
+            metrics: { phrase_count: v.phrases.length, phrases: v.phrases },
+          };
+        }
+        return { passed: true, detail: 'No verification anti-pattern phrases', metrics: { phrase_count: 0 } };
       },
     },
   ],

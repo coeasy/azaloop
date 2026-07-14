@@ -1,5 +1,20 @@
-# AzaLoop Client Capability Matrix
-# Defines which capabilities each AI client supports natively
+# AzaLoop Client Capability Matrix (v14 — +6 capabilities)
+# Defines which capabilities each AI client supports natively.
+# v14-P7.4 extension: webhook, cron, event-bus, feature-flag, secrets, metrics.
+#
+# Capability semantics:
+#   hooks         — client fires pre/post tool events
+#   rules         — client reads rules from a system-prompt file
+#   mcp           — client registers an MCP server
+#   skills        — client has a native skill invocation API
+#   native_loop   — client runs an agentic loop natively
+#   stop_hook     — client can interrupt a running loop
+#   webhook       — client supports inbound HTTP webhooks
+#   cron          — client can run scheduled tasks
+#   event_bus     — client participates in the azaloop event bus
+#   feature_flag  — client can read remote feature flags
+#   secrets       — client can fetch secrets from a vault
+#   metrics       — client emits structured metrics
 
 clients:
   cursor:
@@ -11,6 +26,12 @@ clients:
       skills: true
       native_loop: true
       stop_hook: true
+      webhook: true
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: true
 
   claude-code:
     tier: T1
@@ -21,6 +42,12 @@ clients:
       skills: true
       native_loop: true
       stop_hook: true
+      webhook: true
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: true
 
   trae:
     tier: T1
@@ -31,6 +58,12 @@ clients:
       skills: false
       native_loop: true
       stop_hook: false
+      webhook: true
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: true
 
   windsurf:
     tier: T1
@@ -41,6 +74,12 @@ clients:
       skills: false
       native_loop: true
       stop_hook: false
+      webhook: false
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: false
 
   vscode:
     tier: T2
@@ -51,6 +90,12 @@ clients:
       skills: false
       native_loop: false
       stop_hook: false
+      webhook: false
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: false
 
   cline:
     tier: T2
@@ -61,6 +106,12 @@ clients:
       skills: true
       native_loop: true
       stop_hook: false
+      webhook: false
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: false
 
   continue:
     tier: T2
@@ -71,6 +122,12 @@ clients:
       skills: false
       native_loop: false
       stop_hook: false
+      webhook: false
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: false
 
   roo-code:
     tier: T2
@@ -81,6 +138,12 @@ clients:
       skills: true
       native_loop: true
       stop_hook: false
+      webhook: false
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: false
 
   kiro:
     tier: T2
@@ -91,6 +154,12 @@ clients:
       skills: false
       native_loop: false
       stop_hook: false
+      webhook: false
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: false
 
   github-copilot:
     tier: T2
@@ -101,6 +170,12 @@ clients:
       skills: false
       native_loop: false
       stop_hook: false
+      webhook: false
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: false
 
   openhands:
     tier: T2
@@ -111,6 +186,12 @@ clients:
       skills: false
       native_loop: false
       stop_hook: false
+      webhook: false
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: false
 
   aider:
     tier: T3
@@ -121,6 +202,12 @@ clients:
       skills: false
       native_loop: false
       stop_hook: false
+      webhook: false
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: false
 
   goose:
     tier: T3
@@ -131,6 +218,12 @@ clients:
       skills: false
       native_loop: false
       stop_hook: false
+      webhook: false
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: false
 
   zed:
     tier: T3
@@ -141,6 +234,12 @@ clients:
       skills: false
       native_loop: false
       stop_hook: false
+      webhook: false
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: false
 
   codeium:
     tier: T3
@@ -151,6 +250,12 @@ clients:
       skills: false
       native_loop: false
       stop_hook: false
+      webhook: false
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: false
 
   droid:
     tier: T3
@@ -161,3 +266,9 @@ clients:
       skills: false
       native_loop: false
       stop_hook: false
+      webhook: false
+      cron: false
+      event_bus: true
+      feature_flag: false
+      secrets: false
+      metrics: false

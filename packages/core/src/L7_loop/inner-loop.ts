@@ -1,5 +1,6 @@
 import { StateMachine, type Stage } from './state-machine';
-import { PhaseLoop, type PhaseResult, type MakerFn, type CheckerFn, type OptimizerFn } from './phase-loop';
+import { PhaseLoop, type PhaseResult, type PhaseOneResult, type MakerFn, type CheckerFn, type OptimizerFn } from './phase-loop';
+import type { NextAction } from '@azaloop/shared';
 import type { CircuitBreaker } from './circuit-breaker';
 import { DAGBuilder, type Task as DAGTask } from './dag-builder';
 import { DecisionPointRegistry } from './decision-points';
@@ -47,6 +48,36 @@ export interface InnerLoopResult {
 }
 
 /**
+ * V16: Result returned by {@link InnerLoop.runStage}.
+ *
+ * Unlike InnerLoopResult (which aggregates all 5 stages), this represents
+ * a single stage execution. When `awaitingAction` is set, the LLM must
+ * execute the specified tool before the next call to `runStage()`.
+ */
+export interface InnerStageResult {
+  /** Whether this stage execution completed. */
+  done: boolean;
+  /** The stage that was executed. */
+  stage: Stage;
+  /** The story ID. */
+  story_id: string;
+  /** Whether the stage succeeded (gate passed). */
+  success: boolean;
+  /** Whether the stage escalated. */
+  escalated: boolean;
+  /** Escalation reason, if escalated. */
+  escalation_reason?: string;
+  /** V16: If the maker returned `awaiting_agent`, the action the LLM should take. */
+  awaitingAction?: NextAction;
+  /** Work summary from this stage. */
+  work: string;
+  /** Suggestions for the next loop level. */
+  suggestions: string[];
+  /** Phase iteration count for this stage. */
+  iteration: number;
+}
+
+/**
  * Options accepted by {@link InnerLoop}.
  */
 export interface InnerLoopOptions {
@@ -58,6 +89,11 @@ export interface InnerLoopOptions {
   maxPhaseIterations?: number;
   /** Decision point registry for recording DP transitions (DP-0 to DP-7). */
   dpRegistry?: DecisionPointRegistry;
+  /**
+   * v13 — P6.1: aza directory used to record subagent review results
+   * under `<azaDir>/tasks/<taskId>/NOTES.md`. Defaults to '.aza'.
+   */
+  azaDir?: string;
 }
 
 /**
@@ -94,6 +130,8 @@ export class InnerLoop {
   private stageHistory: StageRecord[] = [];
   private stageFailures: number = 0;
   private totalIterations: number = 0;
+  /** v13 — P6.1: aza dir for subagent review notes. */
+  private azaDir: string;
 
   constructor(
     circuitBreaker?: CircuitBreaker,
@@ -106,7 +144,9 @@ export class InnerLoop {
       autoTransition: options.autoTransition ?? true,
       maxPhaseIterations: options.maxPhaseIterations ?? 5,
       dpRegistry: options.dpRegistry,
+      azaDir: options.azaDir,
     };
+    this.azaDir = options.azaDir ?? '.aza';
     this.stateMachine = stateMachine ?? new StateMachine();
     this.phaseLoop = new PhaseLoop(circuitBreaker, {
       maxIterations: this.options.maxPhaseIterations ?? 5,
@@ -115,7 +155,162 @@ export class InnerLoop {
   }
 
   /**
+   * V16: Run a single stage of the inner loop.
+   *
+   * Unlike `run()`, this executes ONE stage and returns immediately.
+   * If the maker returns `{ status: "awaiting_agent" }`, the result
+   * contains `awaitingAction` so the LoopController can tell the LLM
+   * to execute the specified tool before calling `runStage()` again.
+   *
+   * @param stage    The stage to execute.
+   * @param storyId  The ID of the Story being processed.
+   * @param provider A function that returns maker/checker/optimizer for this stage.
+   */
+  async runStage(stage: Stage, storyId: string, provider: StageHandlerProvider): Promise<InnerStageResult> {
+    const stageStart = new Date().toISOString();
+    this.stateMachine.setStageStatus(stage, 'in_progress');
+
+    // V12: DAG Builder integration — build task dependency graph in design stage (first time only)
+    if (stage === 'design' && this.stageHistory.length === 0) {
+      try {
+        const dag = new DAGBuilder();
+        const tasks: DAGTask[] = [
+          { id: storyId, title: `Story: ${storyId}`, dependencies: [], status: 'pending' },
+        ];
+        const buildResult = dag.build(tasks);
+        if (buildResult.is_acyclic) {
+          const parallelTasks = dag.getParallelTasks();
+          if (parallelTasks.length > 1) {
+            // DAG result logged via phase loop
+          }
+        }
+      } catch { /* best-effort: DAG is non-fatal */ }
+    }
+
+    // Obtain handlers for this stage
+    const handlers = provider(stage);
+
+    // Run one phase iteration for this stage
+    const phaseOneResult = await this.phaseLoop.runOne(
+      stage,
+      handlers.maker,
+      handlers.checker,
+      handlers.optimizer,
+      this.totalIterations + 1,
+    );
+
+    this.totalIterations++;
+
+    // V16: If awaiting agent action, return immediately
+    if (phaseOneResult.awaitingAction) {
+      return {
+        done: false,
+        stage,
+        story_id: storyId,
+        success: false,
+        escalated: false,
+        awaitingAction: phaseOneResult.awaitingAction,
+        work: phaseOneResult.work,
+        suggestions: phaseOneResult.suggestions,
+        iteration: this.totalIterations,
+      };
+    }
+
+    if (phaseOneResult.done && phaseOneResult.success) {
+      // Stage succeeded
+      this.stateMachine.setStageStatus(stage, 'completed');
+      this.circuitBreaker?.recordProgress('inner');
+      this.stageFailures = 0;
+
+      // Record stage history
+      this.stageHistory.push({
+        stage,
+        result: {
+          success: true,
+          stage,
+          work: phaseOneResult.work,
+          iterations: phaseOneResult.iteration,
+          suggestions: phaseOneResult.suggestions,
+          history: [],
+          escalated: false,
+        },
+        started_at: stageStart,
+        completed_at: new Date().toISOString(),
+        auto_transitioned: true,
+      });
+
+      return {
+        done: true,
+        stage,
+        story_id: storyId,
+        success: true,
+        escalated: false,
+        work: phaseOneResult.work,
+        suggestions: phaseOneResult.suggestions,
+        iteration: this.totalIterations,
+      };
+    }
+
+    // Stage failed or escalated
+    this.stageFailures++;
+    this.stateMachine.setStageStatus(stage, 'blocked', phaseOneResult.escalation_reason);
+    this.circuitBreaker?.recordFailure(
+      'inner',
+      phaseOneResult.escalation_reason || `Stage "${stage}" failed`,
+    );
+
+    // Check if we should escalate
+    if (this.stageFailures >= (this.options.maxStageFailures ?? 3)) {
+      return {
+        done: true,
+        stage,
+        story_id: storyId,
+        success: false,
+        escalated: true,
+        escalation_reason: `${this.stageFailures} consecutive stage failures`,
+        work: phaseOneResult.work,
+        suggestions: phaseOneResult.suggestions,
+        iteration: this.totalIterations,
+      };
+    }
+
+    // Check circuit breaker
+    if (this.circuitBreaker) {
+      const breakerResult = this.circuitBreaker.check('inner');
+      if (breakerResult.tripped) {
+        return {
+          done: true,
+          stage,
+          story_id: storyId,
+          success: false,
+          escalated: true,
+          escalation_reason: `Circuit breaker tripped: ${breakerResult.reason}`,
+          work: phaseOneResult.work,
+          suggestions: phaseOneResult.suggestions,
+          iteration: this.totalIterations,
+        };
+      }
+    }
+
+    // Not done — needs retry
+    return {
+      done: false,
+      stage,
+      story_id: storyId,
+      success: false,
+      escalated: phaseOneResult.escalated,
+      escalation_reason: phaseOneResult.escalation_reason,
+      work: phaseOneResult.work,
+      suggestions: phaseOneResult.suggestions,
+      iteration: this.totalIterations,
+    };
+  }
+
+  /**
    * Run the inner loop for a single Story through all 5 stages.
+   *
+   * For V16 single-stage scheduling, use {@link runStage} instead.
+   * This method is kept for backward compatibility.
    *
    * @param storyId  The ID of the Story being processed.
    * @param provider A function that returns maker/checker/optimizer for each stage.
@@ -198,6 +393,31 @@ export class InnerLoop {
         // Circuit breaker: record progress
         this.circuitBreaker?.recordProgress('inner');
         this.stageFailures = 0;
+
+        // v13 — P6.1: when the verify stage succeeds, dispatch the
+        // 2-stage subagent review (spec-compliance → code-quality). If
+        // either stage fails, append a strike reason to the suggestions
+        // and record the result in `<azaDir>/tasks/<taskId>/NOTES.md`.
+        // Best-effort: never throws.
+        if (stage === 'verify') {
+          try {
+            const { runTwoStageReview, recordReviewInNotes } = await import('../L3_roles/subagent-roles');
+            const reviewInput = {
+              taskId: storyId,
+              content: phaseResult.work,
+              context: { stage },
+            };
+            const review = runTwoStageReview(reviewInput);
+            recordReviewInNotes(this.azaDir, review);
+            if (!review.passed) {
+              suggestions.push(
+                `Subagent 2-stage review: ${review.strike ? 'STRIKE' : 'WARN'} — ${review.allFindings.join('; ') || 'no findings'}`,
+              );
+            }
+          } catch {
+            // best-effort
+          }
+        }
 
         // Auto-transition to next stage
         if ((this.options.autoTransition ?? true) && stage !== 'archive') {

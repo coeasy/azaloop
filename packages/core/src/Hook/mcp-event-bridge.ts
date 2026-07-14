@@ -1,6 +1,10 @@
 import type { NextAction } from '@azaloop/shared';
 import type { MCPEventSimulator } from '../continuity/mcp-event-simulator';
 import type { EventSimulationResult } from '../continuity/mcp-event-simulator';
+import { isWriteAllowed, analyzeBlastRadius } from '../L7_loop/write-guards';
+import { WRITE_TOOLS } from '../L7_loop/stage-tool-guard';
+import { withRecursionGuard, RecursionGuardError } from '../L7_loop/recursion-guard';
+import type { Stage } from '../L7_loop/state-machine';
 
 /**
  * A tool executor is any async function that takes a record of arguments
@@ -23,6 +27,36 @@ export type BridgedResult<T extends Record<string, unknown> = Record<string, unk
 };
 
 /**
+ * Error thrown when a write is blocked by the phase write-guard.
+ * Carries the file path and current stage so callers can surface a
+ * useful redirect to the agent.
+ */
+export class StageWriteGuardError extends Error {
+  readonly filePath: string;
+  readonly stage: Stage;
+  constructor(filePath: string, stage: Stage) {
+    super(`write-guard: file "${filePath}" is not allowed to be written in stage "${stage}"`);
+    this.name = 'StageWriteGuardError';
+    this.filePath = filePath;
+    this.stage = stage;
+  }
+}
+
+/**
+ * Options for wiring the phase write-guard into MCPEventBridge.
+ * If omitted, the bridge skips write-guard checks (backward-compatible).
+ */
+export interface MCPEventBridgeOptions {
+  /**
+   * Resolves the current pipeline stage. Called once per write-tool call.
+   * If not provided, write-guard checks are skipped.
+   */
+  stageResolver?: () => Promise<Stage>;
+  /** Workspace root for blast-radius analysis. Defaults to process.cwd(). */
+  workspaceRoot?: string;
+}
+
+/**
  * MCPEventBridge — bridges MCP tool calls to the AzaLoop event bus.
  *
  * For clients that lack native Hook support (Windsurf, VS Code, Roo,
@@ -39,12 +73,15 @@ export type BridgedResult<T extends Record<string, unknown> = Record<string, unk
  */
 export class MCPEventBridge {
   private simulator: MCPEventSimulator;
+  private readonly options: MCPEventBridgeOptions;
 
   /**
    * @param simulator - The MCPEventSimulator that drives pre/post event logic.
+   * @param options - Optional write-guard wiring (stageResolver + workspaceRoot).
    */
-  constructor(simulator: MCPEventSimulator) {
+  constructor(simulator: MCPEventSimulator, options?: MCPEventBridgeOptions) {
     this.simulator = simulator;
+    this.options = options ?? {};
   }
 
   /**
@@ -100,10 +137,39 @@ export class MCPEventBridge {
     // 1. Pre-tool simulation (discipline check — may throw on hard stop).
     await this.simulator.simulatePreTool(toolName, args);
 
-    // 2. Execute the tool.
+    // 1b. CP-new-2: Phase write-guard — for write tools, verify the target
+    //     file is allowed in the current stage, and compute blast radius.
+    let warnings: string[] | undefined;
+    if (WRITE_TOOLS.has(toolName) && this.options.stageResolver) {
+      const stage = await this.options.stageResolver();
+      const filePath = (args.file_path as string) ||
+        (args.project_root as string) ||
+        (args.workspace_path as string) ||
+        '';
+      if (filePath) {
+        if (!isWriteAllowed(filePath, stage)) {
+          await this.simulator.simulateOnError(toolName, new StageWriteGuardError(filePath, stage));
+          throw new StageWriteGuardError(filePath, stage);
+        }
+        // Blast-radius analysis (non-blocking — just adds warnings).
+        try {
+          const blast = await analyzeBlastRadius(filePath, this.options.workspaceRoot || process.cwd());
+          if (blast.riskLevel === 'HIGH' || blast.riskLevel === 'CRITICAL') {
+            warnings = warnings ?? [];
+            warnings.push(`blast-radius ${blast.riskLevel}: ${blast.details}`);
+            for (const rec of blast.recommendations) warnings.push(rec);
+          }
+        } catch {
+          // blast-radius analysis is best-effort (file may not exist yet)
+        }
+      }
+    }
+
+    // 2. Execute the tool — wrap with Recursion Guard (T13 / Trellis pattern)
+    //    so the same tool can't dispatch sub-agents from within itself.
     let result: T;
     try {
-      result = await executor(args);
+      result = await withRecursionGuard(toolName, () => executor(args));
     } catch (error) {
       // Emit on-error event before re-throwing.
       await this.simulator.simulateOnError(toolName, error);
@@ -122,6 +188,7 @@ export class MCPEventBridge {
     const existingNextAction = (result as Record<string, unknown>).next_action as NextAction | undefined;
     return {
       ...result,
+      ...(warnings ? { warnings } : {}),
       next_action: existingNextAction ?? simulation.nextAction,
     };
   }

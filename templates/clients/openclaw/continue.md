@@ -1,13 +1,63 @@
-# AzaLoop 自动续跑规则（MANDATORY — 会话启动时首先执行）
+# AzaLoop 自动循环规则（V15 — 全自动循环驱动器）
 
-1. 读取 `.aza/STATE.md` 获取当前循环状态（当前阶段、进度、迭代次数）
-2. 如果存在 `.aza/RESUME.md`，读取其中的恢复上下文（current_story、未完成动作）
-3. 调用 `aza_continue` MCP 工具获取下一个动作
-4. 执行返回的 `next_action`，不得跳过任何步骤
-5. 重复步骤 3–4，直到 `next_action.action === "done"` 表示任务完成
+## 核心原则：PRD 先行，用户确认后再执行
+借鉴 Cursor plan mode 和 Qoder Quest 待确认机制，每次用户提交新需求时，
+必须先生成 PRD 展示给用户，用户确认后才进入正式执行。
+60 秒无输入自动按当前方案执行（借鉴 Trae 超时确认机制）。
 
-## 说明
-- OpenClaw 不支持原生 Hook，需用户手动触发 `aza_continue` 推进每一步
-- 每次工具返回的 `next_action` 必须立即自动执行
-- 遇到 quality gate 失败时，先修复问题再调用 `aza_loop_complete`
-- 跨会话恢复时调用 `aza_memory_query` 获取相关历史经验
+## 会话启动（每次必须执行）
+1. 调用 `aza_context_calibrate` 获取当前状态
+2. 如果存在 `.aza/RESUME.md`，读取续跑指令
+3. 检查 STATE 中 prd_review 状态:
+   - pending_approval: 重新展示 PRD 摘要，等待用户确认
+   - approved: 继续执行中断的 next_action
+   - 无: 进入 PRD 先行流程
+
+## PRD 先行流程（用户提交新需求时执行）
+1. 调用 `aza_prd_review`（传入 title + description）生成 PRD 并展示摘要
+   - 系统自动：需求分析 → 生成 PRD → 14 维自检 → P0 自动修复 → 展示摘要
+   - 返回：PRD 摘要 + 架构图 + 待确认问题 + needs_user_approval=true
+2. 将 PRD 摘要展示给用户，包括：
+   - 项目名称、复杂度等级、质量评分
+   - 核心功能列表、技术选型、架构预览图
+   - 待确认问题
+   - ⏳ 超时提示："60s 内无输入将自动执行当前方案"
+3. 等待用户响应（三种方式 + 超时）：
+   - 确认执行："开始执行"/"确认"/"ok" → 调用 `aza_prd_approve`
+   - 自定义修改：直接描述修改意见 → 调用 `aza_prd_modify`
+   - 取消："取消"/"算了" → 调用 `aza_prd_cancel`
+   - 60s 超时 → 自动调用 `aza_prd_approve`
+
+## 自动循环执行（V15 — 全自动循环驱动器，无需手动链式调用）
+用户确认 PRD 后，使用 `aza_auto_loop` 工具自动执行整个循环：
+
+1. **单步模式**（推荐，每步可观察结果）：
+   - 调用 `aza_auto_loop`（action="step"）自动执行一步
+   - 返回 `next_action` 指示下一步
+   - 重复调用直到返回 `done: true`
+
+2. **全自动模式**（一步到位，无需分步调用）：
+   - 调用 `aza_auto_loop`（action="full"）自动执行完整循环
+   - 自动处理：sentinel 检测 → PRD 审批门 → 升级处理
+   - 返回完成状态和最终结果
+
+3. **状态监控**：
+   - 调用 `aza_auto_loop`（action="status"）查看当前驱动状态
+
+4. 三级循环自动推进：open → design → build → verify → archive
+5. 每阶段有阶段内循环：maker 执行 → checker 验证 → 不达标则 optimizer 修复
+6. 自动完成直到 `next_action = 'done'`（交付完成）
+
+## 跨会话恢复
+1. 如果会话被中断，下次启动时 `aza_context_calibrate` 自动检测
+2. 从 `.aza/STATE.yaml` 恢复阶段和迭代历史
+3. 从 `.aza/RESUME.md` 恢复上下文和 next_action
+4. 如果 PRD 待确认，重新展示 PRD 摘要
+5. 使用 `aza_auto_loop` 继续执行中断的循环
+
+## 重要规则
+- 每次用户提交新需求，必须先走 PRD 先行流程，不得直接开始编码
+- PRD 展示后必须等待用户确认，不得自行跳过审批
+- 用户确认后，使用 `aza_auto_loop` 全自动执行直到完成，不需要手动链式调用 aza_loop_next
+- 每次工具调用都会自动更新 STATE 和预写 RESUME（MCP 事件模拟器 + 防御性写入）
+- 使用 `aza_auto_loop` 时无需手动处理 sentinel、PRD 审批门 — 全部自动处理

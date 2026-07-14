@@ -40,27 +40,28 @@ export function getWriteGuardConfig(currentPhase: string): WriteGuardConfig {
   const guardConfigs: Record<string, WriteGuardConfig> = {
     open: {
       currentPhase: 'open',
-      lockedFiles: ['prd.json', 'STATE.yaml', 'STATE.HASH'],
+      // STATE.yaml, STATE.HASH, prd.json are always allowed by isWriteAllowed()
+      lockedFiles: [],
       allowedWrites: ['prd.json', 'prd.md'],
     },
     design: {
       currentPhase: 'design',
-      lockedFiles: ['prd.json', 'STATE.yaml', 'STATE.HASH'],
+      lockedFiles: [],
       allowedWrites: ['design.md', 'diagrams/**', 'tasks.md'],
     },
     build: {
       currentPhase: 'build',
-      lockedFiles: ['prd.json', 'STATE.yaml', 'STATE.HASH'],
+      lockedFiles: [],
       allowedWrites: ['src/**', 'tests/**', '*.ts', '*.js', '*.test.ts', '*.spec.ts'],
     },
     verify: {
       currentPhase: 'verify',
-      lockedFiles: ['prd.json', 'STATE.yaml', 'STATE.HASH'],
+      lockedFiles: [],
       allowedWrites: ['*.test.ts', '*.spec.ts', 'test-results/**'],
     },
     archive: {
       currentPhase: 'archive',
-      lockedFiles: ['prd.json', 'STATE.yaml', 'STATE.HASH'],
+      lockedFiles: [],
       allowedWrites: ['docs/**', '*.md', 'archive/**'],
     },
   };

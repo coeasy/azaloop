@@ -1,4 +1,4 @@
-# AzaLoop 自动循环规则（V12.2 — 工业级全自动开发）
+# AzaLoop 自动循环规则（V15 — 全自动循环驱动器）
 
 ## 核心原则：PRD 先行，用户确认后再执行
 借鉴 Cursor plan mode 和 Qoder Quest 待确认机制，每次用户提交新需求时，
@@ -28,24 +28,36 @@
    - 取消："取消"/"算了" → 调用 `aza_prd_cancel`
    - 60s 超时 → 自动调用 `aza_prd_approve`
 
-## 自动循环执行（用户确认 PRD 后，无需再次干预）
-1. 执行 `aza_loop_next` 返回的 `next_action`
-2. 每次工具返回后自动执行新的 `next_action`（链式驱动）
-3. 三级循环自动推进：open → design → build → verify → archive
-4. 每阶段有阶段内循环：maker 执行 → checker 验证 → 不达标则 optimizer 修复
-5. 重复直到 `next_action = 'done'`（交付完成）
-6. 如果 `next_action = 'refine'`，根据 `suggestions` 优化后重试
+## 自动循环执行（V15 — 全自动循环驱动器，无需手动链式调用）
+用户确认 PRD 后，使用 `aza_auto_loop` 工具自动执行整个循环：
+
+1. **单步模式**（推荐，每步可观察结果）：
+   - 调用 `aza_auto_loop`（action="step"）自动执行一步
+   - 返回 `next_action` 指示下一步
+   - 重复调用直到返回 `done: true`
+
+2. **全自动模式**（一步到位，无需分步调用）：
+   - 调用 `aza_auto_loop`（action="full"）自动执行完整循环
+   - 自动处理：sentinel 检测 → PRD 审批门 → 升级处理
+   - 返回完成状态和最终结果
+
+3. **状态监控**：
+   - 调用 `aza_auto_loop`（action="status"）查看当前驱动状态
+
+4. 三级循环自动推进：open → design → build → verify → archive
+5. 每阶段有阶段内循环：maker 执行 → checker 验证 → 不达标则 optimizer 修复
+6. 自动完成直到 `next_action = 'done'`（交付完成）
 
 ## 跨会话恢复
 1. 如果会话被中断，下次启动时 `aza_context_calibrate` 自动检测
 2. 从 `.aza/STATE.yaml` 恢复阶段和迭代历史
 3. 从 `.aza/RESUME.md` 恢复上下文和 next_action
 4. 如果 PRD 待确认，重新展示 PRD 摘要
-5. 继续执行中断的 next_action
+5. 使用 `aza_auto_loop` 继续执行中断的循环
 
 ## 重要规则
 - 每次用户提交新需求，必须先走 PRD 先行流程，不得直接开始编码
 - PRD 展示后必须等待用户确认，不得自行跳过审批
-- 用户确认后，全自动执行直到完成，不需要再次询问用户
-- 每次工具调用都会自动更新 STATE 和预写 RESUME（MCP 事件模拟器）
-- next_action 为 null 或 action='done' 时停止循环
+- 用户确认后，使用 `aza_auto_loop` 全自动执行直到完成，不需要手动链式调用 aza_loop_next
+- 每次工具调用都会自动更新 STATE 和预写 RESUME（MCP 事件模拟器 + 防御性写入）
+- 使用 `aza_auto_loop` 时无需手动处理 sentinel、PRD 审批门 — 全部自动处理

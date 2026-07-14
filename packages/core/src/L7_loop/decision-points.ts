@@ -102,6 +102,12 @@ export class DecisionPointRegistry {
   /**
    * Check if all decision points required for a stage are passed.
    * DP-0 must pass to enter 'open', DP-1 to enter 'design', etc.
+   *
+   * T18: For stage 'design' we additionally enforce the comet-style
+   * "brainstorming not skippable" rule: there must be a recorded
+   * aza_prd_approve call in the audit log. The DP-1 status check alone
+   * can be bypassed by manually setting the DP, so we double-check the
+   * actual tool invocation in the audit log.
    */
   canEnterStage(stage: Stage): boolean {
     const dpMap: Record<Stage, DecisionPointId> = {
@@ -113,7 +119,44 @@ export class DecisionPointRegistry {
     };
     const dpId = dpMap[stage];
     const status = this.getStatus(dpId);
-    return status === 'passed';
+    if (status !== 'passed') return false;
+
+    // T18 enforcement: direct check on the audit log for aza_prd_approve.
+    // This is synchronous to keep canEnterStage cheap; for tests we accept
+    // a missing audit log as "no approve record" (fail-closed).
+    if (stage === 'design') {
+      return this.hasAuditRecord('aza_prd_approve');
+    }
+    return true;
+  }
+
+  /**
+   * Lightweight, sync scan of the audit log for a given tool name.
+   * Returns false (fail-closed) on any error or missing log.
+   */
+  private hasAuditRecord(tool: string): boolean {
+    if (!this.auditLogPath) return false;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const fsSync = require('fs');
+      const content = fsSync.readFileSync(this.auditLogPath, 'utf8');
+      // Each line is a JSON object; check for a 'tool' field equal to `tool`.
+      // We keep this deliberately simple — the audit log is append-only
+      // and small enough that a linear scan is fine.
+      const lines = content.split('\n');
+      for (const line of lines) {
+        if (!line) continue;
+        try {
+          const obj = JSON.parse(line);
+          if (obj && obj.tool === tool) return true;
+        } catch {
+          // skip malformed lines
+        }
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   /**

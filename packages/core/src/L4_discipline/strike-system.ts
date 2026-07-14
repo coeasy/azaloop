@@ -6,7 +6,17 @@ export type StrikeReason =
   | 'committed_broken_code'
   | 'ignored_spec'
   | 'duplicate_error'
-  | 'deadlock_detected';
+  | 'deadlock_detected'
+  | 'red_flag'
+  | 'stage_violation'
+  | 'recursion_violation'
+  // T32 — 4-tier failure classification (ralphy + ruflo)
+  | 'auth_error'
+  | 'rate_limit_hit'
+  | 'transient_failure'
+  | 'permanent_failure'
+  // T32 — TDD Iron Law violation
+  | 'tdd_iron_law_violation';
 
 export interface StrikeRecord {
   reason: StrikeReason;

@@ -1,3 +1,5 @@
+import { sparcPhaseForStage } from './sparc-gates';
+
 export type Stage = 'open' | 'design' | 'build' | 'verify' | 'archive';
 export type StageStatus = 'pending' | 'in_progress' | 'completed' | 'blocked';
 
@@ -245,5 +247,54 @@ export class StateMachine {
   static deserialize(json: string): StateMachine {
     const data = JSON.parse(json);
     return new StateMachine(data);
+  }
+
+  // ── O-9: Stage-tool validation helper ──
+
+  /**
+   * Lightweight helper that asks the StageToolGuard whether a tool is
+   * allowed in the given stage. Returns `null` when the guard is not
+   * available (e.g. during isolated unit tests) so callers can decide
+   * whether to fail-open or fail-closed.
+   *
+   * This is intentionally a thin wrapper — the authoritative check lives
+   * in `stage-tool-guard.ts` (which the MCP layer consults at dispatch
+   * time). This method exists so state-machine consumers can validate
+   * their own decisions without re-implementing the stage→tool matrix.
+   */
+  isValidStageForTool(toolName: string, stage: Stage = this.state.current_stage): boolean | null {
+    try {
+      // Lazy-import to avoid a circular import between state-machine and
+      // stage-tool-guard at module load time.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { findStageForTool } = require('./stage-tool-guard');
+      const allowed = findStageForTool(toolName);
+      if (!allowed) return true; // unknown tools are not blocked at this layer
+      return allowed === stage;
+    } catch {
+      return null;
+    }
+  }
+
+  // ── T26: SPARC 5-phase mapping ──
+
+  /**
+   * Return the SPARC phase that the state machine is currently in. The
+   * mapping is defined by `sparcPhaseForStage()` in `./sparc-gates.ts`.
+   *
+   * - `open`       → `specification`
+   * - `design`     → `pseudocode` (front 30%) or `architecture` (back 70%)
+   * - `build`      → `refinement`
+   * - `verify`     → `completion`
+   * - `archive`    → `completion`
+   *
+   * The `designProgress` is read from the inner-loop's `story_attempts`
+   * ratio as a rough proxy when explicit progress is not available.
+   */
+  getCurrentSparcPhase(): 'specification' | 'pseudocode' | 'architecture' | 'refinement' | 'completion' {
+    const storyAttempts = this.state.loops.inner.story_attempts;
+    const maxAttempts = this.state.loops.inner.max_story_attempts || 3;
+    const designProgress = storyAttempts / maxAttempts;
+    return sparcPhaseForStage(this.state.current_stage, designProgress);
   }
 }

@@ -2,6 +2,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as readline from 'readline';
 import { execSync } from 'child_process';
+import { generateClientRules, generateAllClients } from '../generators/client-rules-generator';
+import type { ClientTier } from '../generators/client-rules-generator';
 
 const BANNER = `
   ╔══════════════════════════════════════════╗
@@ -120,8 +122,30 @@ async function checkExistingConfig(root: string): Promise<string[]> {
   return issues;
 }
 
-export async function setupCommand(options: { root?: string; auto?: boolean } = {}): Promise<void> {
+export interface SetupOptions {
+  root?: string;
+  auto?: boolean;
+  /** Generate rules for a specific client (e.g. "cline", "trae"). */
+  client?: string;
+  /** Generate rules for all 25 clients under --root. */
+  all?: boolean;
+  /** Restrict --all to a tier ("T1" | "T2" | "T3"). */
+  tier?: ClientTier;
+  /** Skip keyword validation after generation. */
+  skipValidation?: boolean;
+}
+
+export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   const root = options.root || process.cwd();
+
+  // Fast path: explicit --client or --all bypass the wizard and run
+  // the rules generator directly. This is what `aza setup --all --tier T2` and
+  // `aza setup --client cline` use.
+  if (options.client || options.all) {
+    await runRulesGeneration(options);
+    return;
+  }
+
   console.log(BANNER);
 
   // Step 1: Prerequisites
@@ -170,6 +194,18 @@ export async function setupCommand(options: { root?: string; auto?: boolean } = 
   // Step 4: Initialize
   console.log('\n  [4/4] Initializing AzaLoop...\n');
 
+  // Also generate the rules file for the selected client.
+  if (clientName !== 'auto') {
+    try {
+      const result = await generateClientRules(clientName, root, {
+        skipValidation: options.skipValidation,
+      });
+      console.log(`  ✓ Generated rules: ${result.path} (${result.bytes} bytes)`);
+    } catch (err) {
+      console.error(`  ⚠ Rules generation failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
   const { initCommand } = await import('./init');
   await initCommand({
     client: clientName !== 'auto' ? clientName : undefined,
@@ -194,4 +230,49 @@ export async function setupCommand(options: { root?: string; auto?: boolean } = 
   🔧  Try:          aza status (check project state)
   🚀  Troubleshoot:  aza health (verify MCP connection)
   `);
+}
+
+/**
+ * Run the rules generator for one client or all clients.
+ * Used by the non-interactive `aza setup --client <name>` and
+ * `aza setup --all [--tier T2]` paths.
+ */
+async function runRulesGeneration(options: SetupOptions): Promise<void> {
+  const root = options.root || process.cwd();
+
+  if (options.client) {
+    try {
+      const result = await generateClientRules(options.client, root, {
+        skipValidation: options.skipValidation,
+      });
+      console.log(`\n[aza setup] ✓ ${result.client} → ${result.path} (${result.bytes} bytes)`);
+      if (!result.validated) {
+        console.error(`[aza setup] ✗ missing keywords: ${result.missingKeywords.join(', ')}`);
+        process.exitCode = 1;
+      }
+    } catch (err) {
+      console.error(`[aza setup] ✗ ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  // --all
+  const result = await generateAllClients(root, {
+    skipValidation: options.skipValidation,
+    onlyTiers: options.tier ? [options.tier] : undefined,
+  });
+  console.log(`\n[aza setup] generated ${result.generated.length} rules file(s) under ${root}`);
+  for (const g of result.generated) {
+    const status = g.validated ? '✓' : '✗';
+    const missing = g.missingKeywords.length ? ` (missing: ${g.missingKeywords.join(', ')})` : '';
+    console.log(`  ${status} ${g.client.padEnd(20)} → ${g.path} (${g.bytes} bytes)${missing}`);
+  }
+  if (result.failed.length) {
+    console.error(`[aza setup] ${result.failed.length} failure(s):`);
+    for (const f of result.failed) {
+      console.error(`  ✗ ${f.client}: ${f.error}`);
+    }
+    process.exitCode = 1;
+  }
 }

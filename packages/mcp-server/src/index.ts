@@ -1,5 +1,5 @@
 import { handlePRDGenerate, handlePRDValidate, handlePrdReview, handlePrdApprove, handlePrdModify, handlePrdCancel } from './tools/aza-prd';
-import { handleLoopNext, handleLoopStatus, handleLoopComplete, handleLoopStop, handleLoopSetCondition, handleLoopResetConditions, handleLoopGetStageIterations, handleLoopCircuitBreaker, handleLoopCompletionGate, handleLoopAudit } from './tools/aza-loop';
+import { handleLoopNext, handleLoopStatus, handleLoopComplete, handleLoopStop, handleLoopSetCondition, handleLoopResetConditions, handleLoopGetStageIterations, handleLoopCircuitBreaker, handleLoopCompletionGate, handleLoopAudit, handleAutoLoop } from './tools/aza-loop';
 import { handleTaskDesign, handleTaskImplement, handleTaskVerify } from './tools/aza-task';
 import { handleQualityCheck } from './tools/aza-quality';
 import { handleMemoryQuery, handleMemoryRecord } from './tools/aza-memory';
@@ -20,6 +20,8 @@ import { handleInit } from './tools/aza-init';
 import { handleEvalRun, handleEvalSummary } from './tools/aza-eval';
 import { handleExplore } from './tools/aza-explore';
 import { handleBudget } from './tools/aza-budget';
+import { handleFinishWork } from './tools/aza-finish-work';
+import { getFormattedToolDefinitions, validateRegistryConsistency } from './tool-registry';
 
 // C1: MCPEventBridge integration — wraps all tool handlers with event simulation
 import {
@@ -30,7 +32,10 @@ import {
   StrikeSystem,
   ResumeGenerator,
   registerAllHookHandlers,
+  checkStageTool,
+  WRITE_TOOLS,
 } from '@azaloop/core';
+import type { Stage } from '@azaloop/core';
 import * as path from 'path';
 
 export type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
@@ -43,7 +48,17 @@ const stateManager = new StateManager(azaDir);
 const strikeSystem = new StrikeSystem();
 const resumeGenerator = new ResumeGenerator(azaDir);
 const simulator = new MCPEventSimulator(eventBus, stateManager, resumeGenerator, strikeSystem);
-const bridge = new MCPEventBridge(simulator);
+const bridge = new MCPEventBridge(simulator, {
+  stageResolver: async () => {
+    try {
+      const fileState = await stateManager.load();
+      return (fileState.pipeline.current_stage as Stage) || 'open';
+    } catch {
+      return 'open';
+    }
+  },
+  workspaceRoot: process.cwd(),
+});
 
 // C9: Register all Hook event handlers
 registerAllHookHandlers(eventBus, stateManager, resumeGenerator);
@@ -67,6 +82,8 @@ const RAW_HANDLERS: Record<string, ToolHandler> = {
   aza_loop_circuit_breaker: (args) => handleLoopCircuitBreaker(args.workspace_path as string),
   aza_loop_completion_gate: (args) => handleLoopCompletionGate(args.workspace_path as string),
   aza_loop_audit: (args) => handleLoopAudit(args.workspace_path as string),
+  // ── P0-4: Auto-loop driver (programmatic next_action chain execution) ──
+  aza_auto_loop: (args) => handleAutoLoop(args.action as string, args.current_stage as string, args.workspace_path as string, args.tool_name as string),
   aza_task_design: (args) => handleTaskDesign(args.story_id as string, args.title as string, args.description as string),
   aza_task_implement: (args) => handleTaskImplement(args.task_id as string),
   aza_task_verify: (args) => handleTaskVerify(args.task_id as string),
@@ -126,71 +143,106 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = Object.fromEntries(
   ]),
 );
 
+// ── v14-P8.1: Validate that every tool handler has a registry entry and
+//    vice-versa. Mismatches would silently disable tools, so we fail fast. ──
+const REGISTRY_ERRORS = validateRegistryConsistency(TOOL_HANDLERS);
+if (REGISTRY_ERRORS.length > 0) {
+  // Log a warning but do not crash — the MCP server can still start and
+  // `tools/list` will simply skip missing tools. The errors are exposed via
+  // `getRegistryErrors()` so tests can assert on them.
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[azaloop] tool-registry consistency issues: ${REGISTRY_ERRORS.length}`,
+    REGISTRY_ERRORS.slice(0, 5),
+  );
+}
+
+/**
+ * Return the list of registry consistency errors detected at startup.
+ * Tests can use this to assert on registry/handler drift.
+ */
+export function getRegistryErrors(): readonly string[] {
+  return REGISTRY_ERRORS;
+}
+
 export async function handleToolCall(toolName: string, args: Record<string, unknown>): Promise<unknown> {
   const handler = TOOL_HANDLERS[toolName];
   if (!handler) {
     return { success: false, error: `Unknown tool: ${toolName}`, data: null };
   }
-  return handler(args);
+
+  // ── CP-new-1: Stage-Tool Guard — block tools that don't belong to the
+  //    current pipeline stage. Reads current_stage from STATE.yaml. ──
+  let currentStage: Stage = 'open';
+  try {
+    const fileState = await stateManager.load();
+    currentStage = (fileState.pipeline.current_stage as Stage) || 'open';
+  } catch {
+    // best-effort: if STATE.yaml can't be loaded, default to 'open' (least restrictive for bootstrapping)
+  }
+
+  const guardResult = checkStageTool(toolName, currentStage, CALL_HISTORY);
+  if (!guardResult.allowed) {
+    // Red Flag hit → record a strike so repeated skips escalate.
+    if (guardResult.redFlag) {
+      strikeSystem.record(
+        'red_flag',
+        `Red Flag ${guardResult.redFlag.id}: ${guardResult.reason}`,
+        0,
+      );
+    }
+    return {
+      success: false,
+      error: guardResult.reason,
+      data: null,
+      next_action: {
+        tool: guardResult.redirectTool || 'aza_loop_next',
+        action: 'refine',
+        reason: guardResult.reason,
+      },
+      red_flag: guardResult.redFlag ?? undefined,
+      current_stage: currentStage,
+    };
+  }
+
+  // Record the call for future Red Flag detection (decision-point prerequisites).
+  CALL_HISTORY.push(toolName);
+  if (CALL_HISTORY.length > 200) CALL_HISTORY.shift(); // cap memory
+
+  // Execute the handler
+  const result = await handler(args);
+
+  // ── P1-4: Force RESUME.md pre-write after every tool call ──
+  // This ensures the session is always recoverable, even if the tool
+  // handler is called directly without going through the MCP bridge
+  // (e.g., Trae built-in tools). Best-effort: never throws.
+  // The bridge already writes RESUME.md in simulatePostTool, but we
+  // also write here as a defense-in-depth measure.
+  try {
+    await resumeGenerator.generate(stateManager, {
+      next_tool: toolName,
+      next_action: `tool:${toolName}`,
+      last_milestone: `Called ${toolName} at stage ${currentStage}`,
+    });
+  } catch {
+    // best-effort — RESUME.md write failure never blocks the tool response
+  }
+
+  return result;
 }
 
+/**
+ * Session-scoped call history for Red Flag detection (decision-point skips).
+ * Reset when a new session starts (see aza_session_start handler).
+ */
+const CALL_HISTORY: string[] = [];
+
+// ── v14-P8.1: getToolDefinitions reads from the single source of truth in
+//    tool-registry.ts. Each description is auto-augmented with
+//    "Use when {whenToUse}. {description}" guidance. ──
+
 export function getToolDefinitions() {
-  return [
-    { name: 'aza_prd_generate', description: 'Generate PRD from natural language requirements', inputSchema: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['title', 'description'] } },
-    { name: 'aza_prd_validate', description: 'Validate a PRD document', inputSchema: { type: 'object', properties: { prd: { type: 'object' } }, required: ['prd'] } },
-    { name: 'aza_prd_review', description: '分析用户需求，生成 PRD 并展示摘要等待确认（借鉴 Cursor plan mode + Qoder Quest）', inputSchema: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' } }, required: ['title', 'description'] } },
-    { name: 'aza_prd_approve', description: '用户确认 PRD，进入正式执行', inputSchema: { type: 'object', properties: { answers: { type: 'object' } } } },
-    { name: 'aza_prd_modify', description: '用户提出修改意见，PRD 更新后重新展示', inputSchema: { type: 'object', properties: { feedback: { type: 'string' } }, required: ['feedback'] } },
-    { name: 'aza_prd_cancel', description: '用户取消当前 PRD', inputSchema: { type: 'object', properties: {} } },
-    { name: 'aza_loop_next', description: 'Advance the development loop to the next action', inputSchema: { type: 'object', properties: { current_stage: { type: 'string' }, workspace_path: { type: 'string' } } } },
-    { name: 'aza_loop_status', description: 'Get current loop status', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_loop_complete', description: 'Mark a stage as complete', inputSchema: { type: 'object', properties: { stage: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['stage'] } },
-    { name: 'aza_loop_stop', description: 'Stop the loop with a reason', inputSchema: { type: 'object', properties: { reason: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['reason'] } },
-    { name: 'aza_task_design', description: 'Design a task from a story', inputSchema: { type: 'object', properties: { story_id: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['story_id', 'title', 'description'] } },
-    { name: 'aza_task_implement', description: 'Mark a task as implemented', inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['task_id'] } },
-    { name: 'aza_task_verify', description: 'Verify a task implementation', inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['task_id'] } },
-    { name: 'aza_quality_check', description: 'Run quality gates', inputSchema: { type: 'object', properties: { project_root: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['project_root'] } },
-    { name: 'aza_memory_query', description: 'Query project memory', inputSchema: { type: 'object', properties: { query: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['query'] } },
-    { name: 'aza_memory_record', description: 'Record a memory entry', inputSchema: { type: 'object', properties: { type: { type: 'string' }, summary: { type: 'string' }, details: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, workspace_path: { type: 'string' } }, required: ['type', 'summary', 'details'] } },
-    { name: 'aza_context_calibrate', description: 'Get calibrated context bundle (constitution + rules + role)', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_context_status', description: 'Get current STATE.yaml status', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_continue', description: 'Continue from last session', inputSchema: { type: 'object', properties: { base_dir: { type: 'string' }, workspace_path: { type: 'string' } } } },
-    { name: 'aza_health', description: 'Health check', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_doc_generate', description: 'Generate documentation', inputSchema: { type: 'object', properties: { type: { type: 'string' }, title: { type: 'string' }, content: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['type', 'title'] } },
-    { name: 'aza_skill_search', description: 'Search for skills', inputSchema: { type: 'object', properties: { query: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['query'] } },
-    { name: 'aza_skill_list', description: 'List available skills', inputSchema: { type: 'object', properties: { type: { type: 'string' }, workspace_path: { type: 'string' } } } },
-    { name: 'aza_security_scan', description: 'Run security scan', inputSchema: { type: 'object', properties: { project_root: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['project_root'] } },
-    { name: 'aza_style_check', description: 'Check code style', inputSchema: { type: 'object', properties: { code: { type: 'string' }, file_path: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['code'] } },
-    { name: 'aza_style_learn', description: 'Learn project style patterns', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_audit', description: 'Run loop-audit scoring (0-100, L0-L3) and return signals & recommendations', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_compliance', description: 'Run China compliance check (网络安全法/PIPL/等保2.0/数据出境/AI标识) — returns Red/Yellow/Green scorecard', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' }, check_type: { type: 'string', enum: ['full', 'quick'] } } } },
-    { name: 'aza_dag', description: 'Manage task dependency DAG — build from tasks, query status, or fetch parallel-ready tasks', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['build', 'status', 'parallel'] }, tasks: { type: 'array', items: { type: 'object' } }, dag: { type: 'object' }, workspace_path: { type: 'string' } }, required: ['action'] } },
-    { name: 'aza_loop_circuit_breaker', description: 'Get circuit breaker status (4 dimensions: iteration/token/stagnation/no-progress, 3 levels: phase/inner/outer)', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_loop_completion_gate', description: 'Check completion gate (6 conditions must pass to allow stopping)', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_loop_audit', description: 'Run loop audit scoring (18 signals, 4 levels L0-L3, 0-100 score)', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_loop_set_condition', description: 'Set a guard condition for loop control', inputSchema: { type: 'object', properties: { key: { type: 'string' }, passed: { type: 'boolean' }, workspace_path: { type: 'string' } }, required: ['key', 'passed'] } },
-    { name: 'aza_loop_reset_conditions', description: 'Reset all guard conditions to default', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_loop_stage_iterations', description: 'Get iteration count for a specific stage', inputSchema: { type: 'object', properties: { stage: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['stage'] } },
-    // ── Session initialization ──
-    { name: 'aza_session_start', description: 'Initialize AzaLoop system on session start — creates .aza directory, STATE.yaml, audit.jsonl, and triggers session-start event', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_init', description: 'One-shot project initialization — detects client, creates .aza directory, STATE.yaml, RESUME.md, run-state.json. Call this once per project.', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' }, client: { type: 'string', description: 'Optional client override (auto-detected if omitted)' } } } },
-    // ── V12: Run state + audit log (comet pattern) ──
-    { name: 'aza_runstate_status', description: 'Get machine-owned run state (run-state.json)', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_runstate_update', description: 'Update run state fields (scripts own writes)', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_audit_log_recent', description: 'Get recent audit log entries (append-only, comet pattern)', inputSchema: { type: 'object', properties: { limit: { type: 'number' }, workspace_path: { type: 'string' } } } },
-    { name: 'aza_audit_log_search', description: 'Search audit log by type or source', inputSchema: { type: 'object', properties: { type: { type: 'string' }, source: { type: 'string' }, workspace_path: { type: 'string' } } } },
-    // ── V12: Learn-from-task conventions (Trellis pattern) ──
-    { name: 'aza_conventions_list', description: 'List learned conventions (spec-conventions/conventions.jsonl)', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    { name: 'aza_conventions_write', description: 'Write a learned convention entry', inputSchema: { type: 'object', properties: { tag: { type: 'string' }, description: { type: 'string' }, source: { type: 'string' }, workspace_path: { type: 'string' } }, required: ['tag', 'description'] } },
-    { name: 'aza_conventions_extract', description: 'Extract and auto-write conventions from completed task', inputSchema: { type: 'object', properties: { work_summary: { type: 'string' }, stage: { type: 'string' }, iteration: { type: 'number' }, workspace_path: { type: 'string' } }, required: ['work_summary', 'stage'] } },
-    // ── V12: Eval platform (comet pattern) ──
-    { name: 'aza_eval_run', description: 'Run eval on a test case (Pass@k/Rubric scoring)', inputSchema: { type: 'object', properties: { test_output: { type: 'string' }, expected_behavior: { type: 'string' } }, required: ['test_output', 'expected_behavior'] } },
-    { name: 'aza_eval_summary', description: 'Aggregate all eval results from eval-results.jsonl', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-    // ── V12: Explore mode (OpenSpec pattern — think before commit) ──
-    { name: 'aza_explore', description: 'Explore workspace before committing — analyze codebase, weigh options, output recommendations without writing code', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' }, focus: { type: 'string', description: 'Specific area to explore (optional)' } } } },
-    // ── V12: Budget estimator (loop-cost pattern) ──
-    { name: 'aza_budget', description: 'Generate token budget report — estimates consumption per loop level/stage, tracks actual usage from run-ledger', inputSchema: { type: 'object', properties: { workspace_path: { type: 'string' } } } },
-  ];
+  return getFormattedToolDefinitions();
 }
 
 /**
@@ -202,6 +254,7 @@ export function getToolDefinitions() {
 const HIGH_FREQ_TOOLS = new Set([
   'aza_prd_review', 'aza_prd_approve', 'aza_prd_modify',
   'aza_loop_next', 'aza_loop_status', 'aza_loop_complete', 'aza_loop_stop',
+  'aza_auto_loop',
   'aza_task_design', 'aza_task_implement', 'aza_task_verify',
   'aza_quality_check',
   'aza_continue',

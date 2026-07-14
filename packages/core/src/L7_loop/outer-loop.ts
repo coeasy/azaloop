@@ -227,6 +227,7 @@ export class OuterLoop {
   constructor(
     circuitBreaker?: CircuitBreaker,
     options: OuterLoopOptions = {},
+    sharedInnerLoop?: InnerLoop,
   ) {
     this.circuitBreaker = circuitBreaker;
     this.options = {
@@ -235,7 +236,9 @@ export class OuterLoop {
       enableCircuitBreaker: options.enableCircuitBreaker ?? true,
       maxParallel: options.maxParallel ?? 4,
     };
-    this.innerLoop = new InnerLoop(circuitBreaker);
+    // Use shared InnerLoop instance if provided (e.g., from LoopController)
+    // to ensure state machine reference is consistent across all loop levels.
+    this.innerLoop = sharedInnerLoop ?? new InnerLoop(circuitBreaker);
   }
 
   /**

@@ -1,0 +1,23 @@
+# Example AzaLoop Plugin Manifest
+# Copy this file to `.aza/plugins/<your-plugin>.yaml` and edit it.
+# After editing, run `aza_plugin_load --path <file>` to register it.
+
+name: my-plugin
+version: 0.1.0
+description: Example plugin that logs loop phase transitions.
+
+# Hook events the plugin subscribes to. Must be from:
+#   session-start, pre-tool, post-tool, pre-commit, post-task,
+#   pre-phase, post-phase, on-error, on-stop
+hooks:
+  - pre-phase
+  - post-phase
+
+# MCP tool names the plugin provides. The host registers them after
+# manifest validation. Names must be kebab-case.
+mcp_tools:
+  - my-plugin-status
+
+# Skill names the plugin provides.
+skills:
+  - my-plugin-skill

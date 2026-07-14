@@ -27,20 +27,36 @@ program
 
 program
   .command('setup')
-  .description('Interactive setup wizard — guided installation & configuration')
+  .description('Interactive setup wizard — or generate rules for a specific client via --client/--all')
   .option('--root <path>', 'Project root directory')
   .option('--auto', 'Non-interactive mode (uses auto-detect)')
+  .option('--client <name>', 'Generate rules file for a specific client (e.g. cline, trae, windsurf)')
+  .option('--all', 'Generate rules files for all 25 clients')
+  .option('--tier <tier>', 'When used with --all, restrict to T1 | T2 | T3')
+  .option('--skip-validation', 'Skip keyword validation after generation')
   .action(async (options) => {
     await setupCommand(options);
   });
 
 program
   .command('loop')
-  .description('Advance the development loop to the next action')
+  .description('Advance the development loop to the next action (continuous auto-loop driver)')
   .option('--stage <stage>', 'Current stage (open/design/build/verify/archive)')
   .option('--dir <path>', 'Project .aza directory')
+  .option('--max-iterations <n>', 'Max iterations before forcing stop (default: 50)', '50')
+  .option('--dry-run', 'Print next_action without driving the loop')
+  .option('--task <title>', 'Task title used by the PRD review gate')
+  .option('--description <desc>', 'Task description used by the PRD review gate')
   .action(async (options) => {
-    await loopCommand(options);
+    const maxIterations = options.maxIterations ? parseInt(options.maxIterations, 10) : 50;
+    await loopCommand({
+      stage: options.stage,
+      dir: options.dir,
+      maxIterations: Number.isFinite(maxIterations) ? maxIterations : 50,
+      dryRun: !!options.dryRun,
+      task: options.task,
+      description: options.description,
+    });
   });
 
 program

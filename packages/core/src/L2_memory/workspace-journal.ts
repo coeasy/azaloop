@@ -140,3 +140,47 @@ export class WorkspaceJournal {
     return path.join(this.journalDir, 'workspace-journal.jsonl');
   }
 }
+
+// ── v14 — P9.1: Auto journal entry helper ────────────────────
+
+/**
+ * Auto-append a journal entry without instantiating the full class.
+ * Designed for `auto-loop-engine.ts` which calls this on every stage
+ * transition. Best-effort: failures are caught and logged but never
+ * re-thrown so the loop can continue.
+ *
+ * @param azaDir  workspace `.aza` directory
+ * @param entry   minimal entry payload
+ */
+export async function autoAppendJournalEntry(
+  azaDir: string,
+  entry: {
+    stage: string;
+    summary: string;
+    decisions?: string[];
+    openQuestions?: string[];
+    iteration?: number;
+  },
+): Promise<JournalRecord | null> {
+  try {
+    const journal = new WorkspaceJournal(azaDir);
+    const record = await journal.archive({
+      stage: entry.stage,
+      work_summary: entry.summary,
+      decisions: entry.decisions,
+      issues: entry.openQuestions,
+      next_steps: [],
+      iteration: entry.iteration,
+    });
+    return record;
+  } catch (err) {
+    // best-effort: swallow and warn
+    try {
+      // eslint-disable-next-line no-console
+      console.warn(`autoAppendJournalEntry: ${(err as Error).message}`);
+    } catch {
+      // ignore
+    }
+    return null;
+  }
+}

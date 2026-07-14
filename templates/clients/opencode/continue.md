@@ -1,41 +1,27 @@
-# AzaLoop 0.1.0 自动续跑规则（OpenCode — MANDATORY，会话启动时首先执行）
+<!-- V17 — 引用共享模板 -->
+> 本文件是共享模板的引用，完整内容见 `templates/clients/_shared/v16-auto-loop.md`
 
-> **⚠️ 全自动循环必须严格执行以下规则，不得跳过。**
+# OpenCode 客户端配置 — AzaLoop 自动循环规则（V17）
 
-## 会话启动（MANDATORY）
+<!-- 引用共享模板内容 -->
+_请参考共享模板 [templates/clients/_shared/v16-auto-loop.md](https://github.com/azaloop/azaloop/tree/main/templates/clients/_shared/v16-auto-loop.md)_
 
-1. **调用 `aza_session_start`** 初始化系统（创建 .aza 目录、STATE.yaml、审计日志）。
-2. **调用 `aza_context calibrate`** 获取上下文 + 当前状态。
-3. **调用 `aza_conventions list`** 加载已学约定（Learn-from-task loop）。
-4. **检查 RESUME.md**：
-   - 如果存在 `.aza/RESUME.md` → 调用 `aza_loop next` 续跑（传入 `current_story`）。
-   - 如果不存在 → 询问用户需求 → 调用 `aza_prd generate` 生成新 PRD。
-5. **调用 `aza_memory query`** 获取相关历史经验。
+## OpenCode 特定配置
 
-## 全自动循环（MANDATORY）
+### MCP 配置
+- 使用 `.opencode/AGENTS.md` 配置 agent 规则
+- 使用 `mcp.json` 配置 MCP 服务器
+- 使用 `rules.md` 配置运行规则
 
-**每次工具返回的 `next_action` 必须自动执行，不得跳过。** 这是全自动循环生效的关键。
+### 自动循环执行
+用户确认 PRD 后，使用 `aza_auto_loop` 工具自动执行整个循环：
 
-```
-aza_loop_next → 返回 next_action → 自动调用 next_action.tool → 返回 next_action → ... → aza_loop_next → done
-```
+1. **后台自动循环**（推荐）：调用 `aza_auto_loop`（action="auto"）启动后台调度器
+2. **单步模式**：调用 `aza_auto_loop`（action="step"）执行一步
+3. **全自动模式**：调用 `aza_auto_loop`（action="full"）执行完整循环
 
-**循环流程：**
-1. `aza_loop next` → 进入下一阶段
-2. 根据 `next_action.tool` 自动调用对应工具
-3. 每次工具返回 `next_action`，自动执行
-4. 直到 `next_action.action === 'done'`
-
-## 五阶段流水线
-
-- **open**：`aza_prd generate` → `aza_prd validate` → P0 = 0
-- **design**：`aza_task design` → 架构图
-- **build**：TDD 铁律 → `aza_task implement`
-- **verify**：`aza_quality check` → 五级门禁
-- **archive**：`aza_doc generate` → `aza_conventions extract`
-
-## 禁止
-
-- 不得跳过 `next_action` 链
-- 不得在测试通过前宣称完成（Completion Gate 会阻止）
-- 不得引入模拟流程（必须运行真实工具）
+## 重要规则
+- 每次用户提交新需求，必须先走 PRD 先行流程
+- 用户确认后，使用 `aza_auto_loop` 全自动执行直到完成
+- 每次工具调用都会自动更新 STATE 和预写 RESUME
+- 所有状态变更自动落盘到 STATE.yaml 和 RESUME.md

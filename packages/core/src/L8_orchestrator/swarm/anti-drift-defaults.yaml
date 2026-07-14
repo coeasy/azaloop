@@ -1,0 +1,22 @@
+# v13 — P2.2: ANTI_DRIFT_DEFAULTS
+#
+# Global anti-drift rules that the swarm TopologySelector enforces.
+# These prevent accidental weakening of safety guarantees. Any violation
+# causes `validateAntiDrift` to return a non-empty error list.
+#
+# Reference: ruvnet/ruflo anti-drift defaults.
+
+hard_gate_required: true          # HARD-GATE cannot be disabled
+recursion_guard_required: true    # Recursion guard cannot be disabled
+circuit_breaker_max_strikes: 3    # Circuit breaker max strikes
+tdd_strike_integration: true      # Strike system must integrate with TDD
+worker_heartbeat_ms: 270000       # 4.5 minutes (270 seconds)
+
+# Scale thresholds for topology selection
+topology_rules:
+  team_size_ge_10: hierarchical-mesh
+  team_size_ge_5_criticality_high: hierarchical+raft
+  isolation_required: mesh+unanimous
+  tight_deadline_5plus_tasks: parallel+majority
+  single_task: sequential+leader
+  default: hierarchical+majority
