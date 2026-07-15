@@ -62,7 +62,7 @@ describe('PRDReviewGate', () => {
   });
 
   describe('approve()', () => {
-    it('should return next_action.tool=aza_loop_next', async () => {
+    it('should return next_action.tool=aza_loop', async () => {
       await gate.review({
         title: 'Todo App',
         description: 'Build a todo application with CRUD operations',
@@ -72,9 +72,9 @@ describe('PRDReviewGate', () => {
 
       expect(result.approved).toBe(true);
       expect(result.stage).toBe('open');
-      expect(result.next_action.tool).toBe('aza_loop_next');
-      expect(result.next_action.action).toBe('next');
-      expect(result.next_action.reason).toContain('PRD approved');
+      expect(result.next_action.tool).toBe('aza_loop');
+      expect(result.next_action.action).toBe('full');
+      expect(result.next_action.reason).toMatch(/PRD approved|full auto/i);
     });
 
     it('should clear pending review after approve', async () => {
@@ -139,7 +139,7 @@ describe('PRDReviewGate', () => {
 
       expect(result.cancelled).toBe(true);
       expect(result.next_action.action).toBe('done');
-      expect(result.next_action.tool).toBe('aza_loop_next');
+      expect(result.next_action.tool).toBe('aza_loop');
       expect(result.next_action.reason).toContain('cancelled');
     });
 
@@ -165,8 +165,8 @@ describe('PRDReviewGate', () => {
       const result = await gate.autoApproveOnTimeout();
 
       expect(result.approved).toBe(true);
-      expect(result.next_action.tool).toBe('aza_loop_next');
-      expect(result.next_action.action).toBe('next');
+      expect(result.next_action.tool).toBe('aza_loop');
+      expect(result.next_action.action).toBe('full');
     });
 
     it('should clear pending review after auto-approve', async () => {

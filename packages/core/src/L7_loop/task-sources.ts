@@ -35,6 +35,11 @@ export interface TaskItem {
   source: SkillTaskSource;
   /** Source-specific locator: file path, issue number, etc. */
   ref?: string;
+  /** Optional structured fields from OpenSpec tasks.md sub-lines. */
+  id?: string;
+  verify?: string;
+  ac?: string[];
+  deps?: string[];
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -73,14 +78,42 @@ export async function parseMdTasks(filePath: string, source: SkillTaskSource = '
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
     if (isChecked(line) || isUnchecked(line)) {
-      out.push({
-        title: extractTitle(line),
+      const title = extractTitle(line);
+      const idMatch = line.match(/\*\*([0-9]+(?:\.[0-9]+)*)\*\*/);
+      const item: TaskItem = {
+        title,
         completed: isChecked(line),
         line: i + 1,
         parallel_group: extractParallelGroup(line),
         source,
         ref: filePath,
-      });
+        id: idMatch?.[1],
+      };
+      // Collect indented sub-lines: verify / ac / deps
+      for (let j = i + 1; j < lines.length; j++) {
+        const sub = lines[j] ?? '';
+        if (/^\s*-\s*\[[ x]\]/i.test(sub) || /^#/.test(sub) || (/^\S/.test(sub) && sub.trim())) break;
+        const verify = sub.match(/^\s+-\s*verify:\s*`?([^`\n]+)`?\s*$/i);
+        const ac = sub.match(/^\s+-\s*ac:\s*(.+)\s*$/i);
+        const deps = sub.match(/^\s+-\s*deps:\s*(.+)\s*$/i);
+        if (verify) item.verify = verify[1]!.trim();
+        if (ac) {
+          item.ac = ac[1]!
+            .split(',')
+            .map((s) => s.replace(/[`\s]/g, '').trim())
+            .filter(Boolean);
+        }
+        if (deps) {
+          item.deps = deps[1]!
+            .split(',')
+            .map((s) => s.replace(/[`\s]/g, '').trim())
+            .filter(Boolean);
+        }
+        if (verify || ac || deps) i = j;
+      }
+      const verInline = line.match(/\(verification:\s*([^)]+)\)/i);
+      if (!item.verify && verInline) item.verify = verInline[1]!.trim();
+      out.push(item);
     }
   }
   return out;
@@ -395,4 +428,37 @@ export class TaskSourceAdapter {
   static ralphySpec(path: string): Promise<TaskItem[]> { return parseRalphySpecTasks(path); }
   static openspecChange(path: string): Promise<TaskItem[]> { return parseOpenSpecChangeTasks(path); }
   static azaPrd(path: string): Promise<TaskItem[]> { return parseAzaPrdTasks(path); }
+
+  /**
+   * Parse + quality-gate (P1-3: wire task-source-quality into main path).
+   * Rejects sources scoring < 50 so the inner loop never starts on damaged input.
+   */
+  static async loadWithQuality(
+    kind: 'md' | 'yaml' | 'json' | 'openspec-change' | 'aza-prd',
+    filePath: string,
+  ): Promise<{ items: TaskItem[]; quality: import('./task-source-quality').QualityGateResult }> {
+    const { qualityGate } = await import('./task-source-quality');
+    let items: TaskItem[] = [];
+    switch (kind) {
+      case 'yaml':
+        items = await parseYamlTasks(filePath);
+        break;
+      case 'json':
+        items = await parseJsonTasks(filePath);
+        break;
+      case 'openspec-change':
+        items = await parseOpenSpecChangeTasks(filePath);
+        break;
+      case 'aza-prd':
+        items = await parseAzaPrdTasks(filePath);
+        break;
+      default:
+        items = await parseMdTasks(filePath, 'md');
+    }
+    const quality = qualityGate(items);
+    if (!quality.allowed) {
+      throw new Error(`Task source quality gate failed (${quality.level}): ${quality.reason}`);
+    }
+    return { items, quality };
+  }
 }

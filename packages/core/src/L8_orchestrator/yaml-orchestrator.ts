@@ -102,30 +102,60 @@ export interface StageReport {
 export function parseSimpleYaml(yaml: string): any {
   const lines = yaml.split(/\r?\n/);
   const root: any = {};
-  const stack: Array<{ indent: number; container: any; key?: string }> = [
-    { indent: -1, container: root },
-  ];
+  // container + optional lastKey for converting empty map → list on `- `
+  const stack: Array<{
+    indent: number;
+    container: any;
+    key?: string;
+    /** When true, container is an array and nested keys update the last object item */
+    inListObject?: boolean;
+  }> = [{ indent: -1, container: root }];
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]!;
-    // Skip blanks and comments
     if (raw.trim() === '' || raw.trim().startsWith('#')) continue;
 
     const indent = raw.search(/\S/);
     if (indent < 0) continue;
     const trimmed = raw.trim();
 
-    // Pop the stack to find the right container
     while (stack.length > 1 && stack[stack.length - 1]!.indent >= indent) {
       stack.pop();
     }
     const top = stack[stack.length - 1]!;
 
-    // List item: starts with `- `
-    if (trimmed.startsWith('- ')) {
-      const value = trimmed.slice(2).trim();
-      const arr = top.container[top.key!];
-      if (Array.isArray(arr)) {
+    // List item
+    if (trimmed.startsWith('- ') || trimmed === '-') {
+      const value = trimmed === '-' ? '' : trimmed.slice(2).trim();
+
+      // Ensure parent key holds an array (may have been seeded as {})
+      let arr: any[];
+      if (top.key !== undefined) {
+        const existing = top.container[top.key];
+        if (!Array.isArray(existing)) {
+          arr = [];
+          top.container[top.key] = arr;
+        } else {
+          arr = existing;
+        }
+      } else if (Array.isArray(top.container)) {
+        arr = top.container;
+      } else {
+        continue;
+      }
+
+      if (value === '' || value.includes(':')) {
+        // Mapping item: `- id: s1` or bare `-` then indented fields
+        const obj: any = {};
+        if (value.includes(':')) {
+          const cIdx = value.indexOf(':');
+          const k = value.slice(0, cIdx).trim();
+          const v = value.slice(cIdx + 1).trim();
+          obj[k] = v === '' ? {} : parseValue(v);
+        }
+        arr.push(obj);
+        stack.push({ indent, container: obj, inListObject: true });
+      } else {
         arr.push(parseValue(value));
       }
       continue;
@@ -136,10 +166,36 @@ export function parseSimpleYaml(yaml: string): any {
     if (colonIdx === -1) continue;
     const key = trimmed.slice(0, colonIdx).trim();
     const rawValue = trimmed.slice(colonIdx + 1).trim();
+
+    // Nested fields of a list-of-mappings item
+    if (top.inListObject) {
+      if (rawValue === '') {
+        top.container[key] = {};
+        stack.push({ indent, container: top.container[key], key });
+      } else {
+        top.container[key] = parseValue(rawValue);
+      }
+      continue;
+    }
+
     if (rawValue === '') {
-      // Nested mapping
-      top.container[key] = {};
-      stack.push({ indent, container: top.container[key], key });
+      // Peek: if next non-empty line is a list item at greater indent → array
+      let nextIsList = false;
+      for (let j = i + 1; j < lines.length; j++) {
+        const peek = lines[j]!;
+        if (peek.trim() === '' || peek.trim().startsWith('#')) continue;
+        const pIndent = peek.search(/\S/);
+        if (pIndent <= indent) break;
+        nextIsList = peek.trim().startsWith('-');
+        break;
+      }
+      if (nextIsList) {
+        top.container[key] = [];
+        stack.push({ indent, container: top.container, key });
+      } else {
+        top.container[key] = {};
+        stack.push({ indent, container: top.container[key], key });
+      }
     } else {
       top.container[key] = parseValue(rawValue);
     }

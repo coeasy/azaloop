@@ -62,7 +62,7 @@ export async function handleDag(
           data: status,
           next_action: status.next_ready.length > 0
             ? { tool: 'aza_dag', action: 'parallel', reason: `${status.next_ready.length} task(s) ready to execute` }
-            : { tool: 'aza_loop_next', action: 'next', reason: status.done === status.total ? 'All tasks complete' : 'No parallel-ready tasks — resolve blockers' },
+            : { tool: 'aza_loop', action: 'next', reason: status.done === status.total ? 'All tasks complete' : 'No parallel-ready tasks — resolve blockers' },
           metadata: { iteration: 0, progress: `${status.progress_percent}%`, stage: 'build' },
         };
       }
@@ -90,7 +90,7 @@ export async function handleDag(
           },
           next_action: ready.length > 0
             ? { tool: 'aza_task_implement', action: 'implement', reason: `Execute ${ready.length} parallel task(s): ${ready.map((t) => t.id).join(', ')}` }
-            : { tool: 'aza_loop_next', action: 'next', reason: 'No parallel-ready tasks remaining' },
+            : { tool: 'aza_loop', action: 'next', reason: 'No parallel-ready tasks remaining' },
           metadata: { iteration: 0, progress: `${status.progress_percent}%`, stage: 'build' },
         };
       }

@@ -14,7 +14,7 @@ export async function handleDocGenerate(type: string, title: string, content: st
   return {
     success: true,
     data: { type, title, content, generated_at: new Date().toISOString() },
-    next_action: { tool: 'aza_loop_next', action: 'done', reason: 'Documentation generated, project archived' },
+    next_action: { tool: 'aza_loop', action: 'done', reason: 'Documentation generated, project archived' },
     metadata: { iteration: 0, progress: '100%', stage: 'archive' },
   };
 }

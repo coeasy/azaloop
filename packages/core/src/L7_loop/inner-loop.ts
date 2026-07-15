@@ -170,7 +170,7 @@ export class InnerLoop {
     const stageStart = new Date().toISOString();
     this.stateMachine.setStageStatus(stage, 'in_progress');
 
-    // V12: DAG Builder integration — build task dependency graph in design stage (first time only)
+    // V12: DAG Builder — persist for OuterLoop / parallel scheduling
     if (stage === 'design' && this.stageHistory.length === 0) {
       try {
         const dag = new DAGBuilder();
@@ -179,9 +179,20 @@ export class InnerLoop {
         ];
         const buildResult = dag.build(tasks);
         if (buildResult.is_acyclic) {
-          const parallelTasks = dag.getParallelTasks();
-          if (parallelTasks.length > 1) {
-            // DAG result logged via phase loop
+          const fs = await import('fs');
+          const path = await import('path');
+          const azaDir = (this as any).azaDir || path.join(process.cwd(), '.aza');
+          try {
+            if (!fs.existsSync(azaDir)) fs.mkdirSync(azaDir, { recursive: true });
+            const payload = {
+              story_id: storyId,
+              built_at: new Date().toISOString(),
+              parallel: dag.getParallelTasks(),
+              serialized: typeof (dag as any).serialize === 'function' ? (dag as any).serialize() : buildResult,
+            };
+            fs.writeFileSync(path.join(azaDir, 'dag.json'), JSON.stringify(payload, null, 2), 'utf8');
+          } catch {
+            /* non-fatal */
           }
         }
       } catch { /* best-effort: DAG is non-fatal */ }

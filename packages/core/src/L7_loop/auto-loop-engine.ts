@@ -192,6 +192,15 @@ export class AutoLoopEngine {
       iteration: this.state.iteration + 1,
     });
 
+    // P2-5: auto-compress episodic memory when threshold exceeded
+    try {
+      const { MemoryCompressor } = await import('../L2_memory/compression');
+      const compressor = new MemoryCompressor(this.projectMemory, this.longTermMemory, 50);
+      await compressor.compressIfNeeded();
+    } catch {
+      /* best-effort */
+    }
+
     // v15 — Delegate to AutoLoopDriver for sentinel-aware, PRD-gate-aware step execution
     const stepResult = await this.autoLoopDriver.step();
 
@@ -207,9 +216,9 @@ export class AutoLoopEngine {
       data: {
         stage: stepResult.stage,
         progress: this.state.progress,
-        next_action: stepResult.nextAction ?? { tool: 'aza_loop_next', action: 'next', reason: 'Continue' },
+        next_action: stepResult.nextAction ?? { tool: 'aza_loop', action: 'next', reason: 'Continue' },
       },
-      next_action: stepResult.nextAction ?? { tool: 'aza_loop_next', action: 'next', reason: 'Continue' },
+      next_action: stepResult.nextAction ?? { tool: 'aza_loop', action: 'next', reason: 'Continue' },
       metadata: {
         iteration: stepResult.iteration,
         progress: this.state.progress,
@@ -280,6 +289,31 @@ export class AutoLoopEngine {
     result?: any;
   }> {
     await this.start();
+
+    // P2-4: when board has multiple independent stories and AZA_OUTER_PARALLEL=true,
+    // prefer OuterLoop.runParallel via LoopController (env already wired).
+    // Otherwise cooperative AutoLoopDriver.runFull().
+    if (
+      process.env.AZA_OUTER_PARALLEL === 'true' ||
+      process.env.AZA_OUTER_LOOP_DRIVER === 'true'
+    ) {
+      process.env.AZA_OUTER_LOOP_DRIVER = 'true';
+      const lcResult = await this.loopController.next();
+      this.state.iteration = lcResult.metadata?.iteration ?? this.state.iteration;
+      this.state.progress = lcResult.metadata?.progress ?? this.state.progress;
+      const done = lcResult.next_action?.action === 'done' || lcResult.next_action?.action === 'ship';
+      return {
+        completed: !!done,
+        total_iterations: this.state.iteration,
+        state: { ...this.state },
+        result: {
+          status: done ? 'completed' : 'running',
+          reason: lcResult.next_action?.reason,
+          finalStage: lcResult.metadata?.stage,
+          parallel: process.env.AZA_OUTER_PARALLEL === 'true',
+        },
+      };
+    }
 
     const driverResult = await this.autoLoopDriver.runFull();
 

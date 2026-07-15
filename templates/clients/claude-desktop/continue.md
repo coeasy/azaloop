@@ -1,65 +1,29 @@
-# AzaLoop 自动循环规则（V16 — 全自动循环驱动器）
+<!-- 共享模板: templates/clients/_shared/v17-continue.md -->
+# AzaLoop Auto-Continue（V17 · 8 工具）
 
-## 核心原则：PRD 先行，用户确认后再执行
-借鉴 Cursor plan mode 和 Qoder Quest 待确认机制，每次用户提交新需求时，
-必须先生成 PRD 展示给用户，用户确认后才进入正式执行。
-60 秒无输入自动按当前方案执行（借鉴 Trae 超时确认机制）。
+## 会话启动（MANDATORY）
 
-## 会话启动（每次必须执行）
-1. 调用 `aza_context_calibrate` 获取当前状态
-2. 如果存在 `.aza/RESUME.md`，读取续跑指令
-3. 检查 STATE 中 prd_review 状态:
-   - pending_approval: 重新展示 PRD 摘要，等待用户确认
-   - approved: 继续执行中断的 next_action
-   - 无: 进入 PRD 先行流程
+1. `aza_session(action=continue)`；无 RESUME 则 `calibrate`
+2. 跟随 `next_action` — 不要问用户是否继续
 
-## PRD 先行流程（用户提交新需求时执行）
-1. 调用 `aza_prd_review`（传入 title + description）生成 PRD 并展示摘要
-   - 系统自动：需求分析 → 生成 PRD → 14 维自检 → P0 自动修复 → 展示摘要
-   - 返回：PRD 摘要 + 架构图 + 待确认问题 + needs_user_approval=true
-2. 将 PRD 摘要展示给用户，包括：
-   - 项目名称、复杂度等级、质量评分
-   - 核心功能列表、技术选型、架构预览图
-   - 待确认问题
-   - ⏳ 超时提示："60s 内无输入将自动执行当前方案"
-3. 等待用户响应（三种方式 + 超时）：
-   - 确认执行："开始执行"/"确认"/"ok" → 调用 `aza_prd_approve`
-   - 自定义修改：直接描述修改意见 → 调用 `aza_prd_modify`
-   - 取消："取消"/"算了" → 调用 `aza_prd_cancel`
-   - 60s 超时 → 自动调用 `aza_prd_approve`
+## 唯一工具面
 
-## 自动循环执行（V15 — 全自动循环驱动器，无需手动链式调用）
-用户确认 PRD 后，使用 `aza_auto_loop` 工具自动执行整个循环：
+`aza_session` · `aza_prd` · `aza_loop` · `aza_spec` · `aza_quality` · `aza_finish` · `aza_memory` · `aza_meta`
 
-1. **单步模式**（推荐，每步可观察结果）：
-   - 调用 `aza_auto_loop`（action="step"）自动执行一步
-   - 返回 `next_action` 指示下一步
-   - 重复调用直到返回 `done: true`
+（`aza_auto_loop` / `aza_task_*` / `aza_context_*` 仅为 legacy 别名，禁止当作主指令。）
 
-2. **全自动模式**（一步到位，无需分步调用）：
-   - 调用 `aza_auto_loop`（action="full"）自动执行完整循环
-   - 自动处理：sentinel 检测 → PRD 审批门 → 升级处理
-   - 返回完成状态和最终结果
+## 全自动脊柱
 
-3. **状态监控**：
-   - 调用 `aza_auto_loop`（action="status"）查看当前驱动状态
+```
+aza_prd(review[, auto_approve=true])
+→ aza_loop(full)
+→ awaitingAction → aza_spec / aza_quality
+→ aza_loop(report_tool)
+→ aza_finish(ship)
+```
 
-4. **后台自动循环**（推荐）：调用 `aza_auto_loop`（action="auto"）启动后台调度器，调度器自动推进循环，需要 LLM 执行工具时自动暂停。LLM 执行完工具后调用 `aza_auto_loop`（action="report_tool", tool_name="..."）通知调度器继续。
+无人值守：设置 `AZA_AUTO_APPROVE_PRD=true` 或 review 时传 `auto_approve=true`。
 
-4. 三级循环自动推进：open → design → build → verify → archive
-5. 每阶段有阶段内循环：maker 执行 → checker 验证 → 不达标则 optimizer 修复
-6. 自动完成直到 `next_action = 'done'`（交付完成）
+## MCP 配置
 
-## 跨会话恢复
-1. 如果会话被中断，下次启动时 `aza_context_calibrate` 自动检测
-2. 从 `.aza/STATE.yaml` 恢复阶段和迭代历史
-3. 从 `.aza/RESUME.md` 恢复上下文和 next_action
-4. 如果 PRD 待确认，重新展示 PRD 摘要
-5. 使用 `aza_auto_loop` 继续执行中断的循环
-
-## 重要规则
-- 每次用户提交新需求，必须先走 PRD 先行流程，不得直接开始编码
-- PRD 展示后必须等待用户确认，不得自行跳过审批
-- 用户确认后，使用 `aza_auto_loop` 全自动执行直到完成，不需要手动链式调用 aza_loop_next
-- 每次工具调用都会自动更新 STATE 和预写 RESUME（MCP 事件模拟器 + 防御性写入）
-- 使用 `aza_auto_loop` 时无需手动处理 sentinel、PRD 审批门 — 全部自动处理
+在客户端配置 `mcp.json`，指向 `@azaloop/mcp-server` 或本地 `packages/mcp-server/dist/server.js`，并设置项目 `cwd`。

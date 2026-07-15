@@ -17,11 +17,15 @@ export async function runRefactor(ctx: WorkerContext): Promise<WorkerReport> {
   if (iters > 10) {
     findings.push({
       severity: 'warn',
-      message: `Loop iteration ${iters} is high — consider a refactor before proceeding.`,
-      refs: ['STATE.yaml:loop.iteration'],
+      message: `Loop iteration ${iters} is high — consider a refactor before proceeding. (heuristic worker; AST refactor not implemented)`,
+      refs: ['STATE.yaml:loop.iteration', 'placeholder:refactor'],
     });
   } else {
-    findings.push({ severity: 'info', message: 'No refactor hints at this iteration.', refs: [] });
+    findings.push({
+      severity: 'info',
+      message: 'No refactor hints at this iteration. Worker is heuristic-only (not a silent success).',
+      refs: ['placeholder:refactor'],
+    });
   }
 
   return {

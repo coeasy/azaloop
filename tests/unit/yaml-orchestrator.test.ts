@@ -209,14 +209,18 @@ describe('v13 P5.1 — YAMLOrchestrator (pipeline)', () => {
         },
       ],
     });
-    const report = await o.runPipeline(azaDir, async () => [
-      // S1 passes
-      { name: 'Acceptance criteria', passed: true, weight: 1 },
-      { name: 'Constraints', passed: true, weight: 1 },
-      { name: 'Edge cases', passed: true, weight: 1 },
-      { name: 'Out-of-scope', passed: true, weight: 1 },
-      // S2 fails (no evidence)
-    ]);
+    const report = await o.runPipeline(azaDir, async (stage) => {
+      if (stage.id === 's2') {
+        // S2 fails (no evidence) — refinement gate score=0
+        return [];
+      }
+      return [
+        { name: 'Acceptance criteria', passed: true, weight: 1 },
+        { name: 'Constraints', passed: true, weight: 1 },
+        { name: 'Edge cases', passed: true, weight: 1 },
+        { name: 'Out-of-scope', passed: true, weight: 1 },
+      ];
+    });
     expect(report.success).toBe(false);
     expect(report.stageReports).toHaveLength(2);
     expect(report.stageReports[0]!.gatePassed).toBe(true);

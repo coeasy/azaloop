@@ -41,7 +41,7 @@ export async function handleSessionStart(workspacePath?: string): Promise<LoopRe
         run_state: runState.getState(),
       },
       next_action: {
-        tool: 'aza_loop_next',
+        tool: 'aza_loop',
         action: 'next',
         reason: `Session initialized. Current stage: ${state.pipeline.current_stage}`,
       },

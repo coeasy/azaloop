@@ -103,22 +103,100 @@ export class ResumeGenerator {
 
   async generate(stateManager: StateManager, extra?: Partial<ResumeData>): Promise<ResumeData> {
     const state = stateManager.getState();
+    // STATE.yaml is the single source of truth — never let stale RESUME fields win.
+    const stage = this.resolveAuthoritativeStage(state);
+    const blocked = this.isBlocked(state);
+    const hardStopped =
+      state.loop.iteration >= (state.loop.max_iterations || 50) || blocked;
+    const progress = hardStopped && state.loop.progress === '100%'
+      ? this.safeProgress(state)
+      : state.loop.progress;
+
+    const stageActions: Record<string, { tool: string; action: string }> = {
+      open: { tool: 'aza_prd', action: 'review' },
+      design: { tool: 'aza_spec', action: 'design' },
+      build: { tool: 'aza_spec', action: 'implement' },
+      verify: { tool: 'aza_quality', action: 'check' },
+      archive: { tool: 'aza_finish', action: 'ship' },
+    };
+
+    let nextTool = 'aza_loop';
+    let nextAction = 'full';
+    if (blocked) {
+      nextTool = 'aza_loop';
+      nextAction = 'reset';
+    } else if (hardStopped && !state.pipeline.stages.archive?.status?.includes('completed')) {
+      nextTool = 'aza_loop';
+      nextAction = 'stop';
+    } else if (state.loop.current_story) {
+      nextTool = 'aza_loop';
+      nextAction = 'full';
+    } else {
+      const entry = stageActions[stage] || { tool: 'aza_loop', action: 'full' };
+      nextTool = entry.tool;
+      nextAction = entry.action;
+    }
+
+    // Only allow safe overlays from extra (client/model/errors/explicit next).
+    const safeExtra: Partial<ResumeData> = {};
+    if (extra?.client && extra.client !== 'unknown') safeExtra.client = extra.client;
+    if (extra?.model && extra.model !== 'unknown') safeExtra.model = extra.model;
+    if (extra?.errors_to_avoid?.length) safeExtra.errors_to_avoid = extra.errors_to_avoid;
+    if (extra?.last_milestone) safeExtra.last_milestone = extra.last_milestone;
+    if (extra?.next_tool && extra?.next_action && !blocked) {
+      // Prefer caller-provided next only when not blocked and action is not a legacy continue_* token
+      if (!String(extra.next_action).startsWith('continue_')) {
+        safeExtra.next_tool = extra.next_tool;
+        safeExtra.next_action = extra.next_action;
+      }
+    }
+
     const resume: ResumeData = {
-      current_stage: state.pipeline.current_stage,
+      current_stage: stage,
       current_story: state.loop.current_story,
       iteration: state.loop.iteration,
-      progress: state.loop.progress,
+      progress,
       client: state.loop.client,
       model: state.loop.model,
-      next_action: `continue_${state.pipeline.current_stage}`,
-      next_tool: this.getNextTool(state.pipeline.current_stage),
-      errors_to_avoid: [],
+      next_action: nextAction,
+      next_tool: nextTool,
+      errors_to_avoid: blocked
+        ? [`Stage "${stage}" is blocked — call aza_loop(reset) then aza_loop(full)`]
+        : [],
       last_milestone: state.updated_at,
-      ...extra,
+      ...safeExtra,
     };
 
     await this.write(resume);
     return resume;
+  }
+
+  /** Prefer blocked → in_progress → phase.current → pipeline.current_stage. */
+  private resolveAuthoritativeStage(state: ReturnType<StateManager['getState']>): string {
+    const stages = state.pipeline?.stages || {};
+    const order = ['open', 'design', 'build', 'verify', 'archive'] as const;
+    for (const s of order) {
+      if (stages[s]?.status === 'blocked') return s;
+    }
+    for (const s of order) {
+      if (stages[s]?.status === 'in_progress') return s;
+    }
+    const phase = (state as any).loops?.phase?.current;
+    if (phase && typeof phase === 'string') return phase;
+    return state.pipeline.current_stage || 'open';
+  }
+
+  private isBlocked(state: ReturnType<StateManager['getState']>): boolean {
+    const stages = state.pipeline?.stages || {};
+    return Object.values(stages).some((s: any) => s?.status === 'blocked');
+  }
+
+  private safeProgress(state: ReturnType<StateManager['getState']>): string {
+    const stages = state.pipeline?.stages || {};
+    const order = ['open', 'design', 'build', 'verify', 'archive'] as const;
+    const completed = order.filter((s) => stages[s]?.status === 'completed').length;
+    const pct = Math.min(99, Math.round((completed / order.length) * 100));
+    return `${pct}%`;
   }
 
   async read(): Promise<ResumeData | null> {
@@ -149,10 +227,28 @@ export class ResumeGenerator {
   }
 
   private format(resume: ResumeData): string {
+    // P2-2: standardized YAML frontmatter + markdown body (planning-with-files aligned)
+    const frontmatter = [
+      '---',
+      'schema_version: "1.0"',
+      `stage: ${JSON.stringify(resume.current_stage)}`,
+      resume.current_story ? `story: ${JSON.stringify(resume.current_story)}` : null,
+      `iteration: ${resume.iteration}`,
+      `progress: ${JSON.stringify(resume.progress)}`,
+      `client: ${JSON.stringify(resume.client)}`,
+      `model: ${JSON.stringify(resume.model)}`,
+      `next_tool: ${JSON.stringify(resume.next_tool)}`,
+      `next_action: ${JSON.stringify(resume.next_action)}`,
+      `updated_at: ${JSON.stringify(new Date().toISOString())}`,
+      '---',
+      '',
+    ].filter((l) => l !== null).join('\n');
+
     return [
+      frontmatter,
       '# AzaLoop Resume',
       '',
-      '> Auto-generated resume file for cross-session continuity',
+      '> Auto-generated resume file for cross-session continuity (schema_version 1.0)',
       '',
       '## Current State',
       '',
@@ -176,14 +272,44 @@ export class ResumeGenerator {
       ].join('\n') : '',
       '## Instructions',
       '',
-      '1. Call `aza_context_calibrate` to get current state',
-      '2. Call `aza_loop_next` to continue',
-      '3. Follow the next_action chain automatically',
+      '1. Call `aza_session(action=continue)` or `aza_session(action=calibrate)`',
+      '2. Call `aza_loop(action=full)` to resume (follow awaitingAction + report_tool)',
+      '3. Follow the `next_action` chain automatically — never ask the user to click Continue',
       '',
     ].filter(Boolean).join('\n');
   }
 
   private parse(content: string): ResumeData {
+    // Prefer YAML frontmatter (schema_version 1.0+) when present
+    const fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (fm && fm[1]) {
+      const data: Record<string, string> = {};
+      for (const line of fm[1].split(/\r?\n/)) {
+        const m = line.match(/^(\w+):\s*(.*)$/);
+        if (m && m[1] && m[2] !== undefined) {
+          let v = m[2].trim();
+          if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+            v = v.slice(1, -1);
+          }
+          data[m[1]] = v;
+        }
+      }
+      if (data.stage || data.next_tool) {
+        return {
+          current_stage: data.stage || 'open',
+          current_story: data.story,
+          iteration: parseInt(data.iteration || '0', 10),
+          progress: data.progress || '0%',
+          client: data.client || 'unknown',
+          model: data.model || 'unknown',
+          next_action: data.next_action || 'full',
+          next_tool: data.next_tool || 'aza_loop',
+          errors_to_avoid: [],
+          last_milestone: data.updated_at || new Date().toISOString(),
+        };
+      }
+    }
+
     const lines = content.split('\n');
     const data: Record<string, string> = {};
     for (const line of lines) {
@@ -199,8 +325,8 @@ export class ResumeGenerator {
       progress: data['progress'] || '0%',
       client: data['client'] || 'unknown',
       model: data['model'] || 'unknown',
-      next_action: data['action'] || 'continue_open',
-      next_tool: data['tool'] || 'aza_prd_generate',
+      next_action: data['action'] || 'full',
+      next_tool: data['tool'] || 'aza_loop',
       errors_to_avoid: [],
       last_milestone: new Date().toISOString(),
     };
@@ -208,13 +334,13 @@ export class ResumeGenerator {
 
   private getNextTool(stage: string): string {
     const tools: Record<string, string> = {
-      open: 'aza_prd_generate',
-      design: 'aza_task_design',
-      build: 'aza_task_implement',
-      verify: 'aza_quality_check',
-      archive: 'aza_doc_generate',
+      open: 'aza_prd',
+      design: 'aza_spec',
+      build: 'aza_spec',
+      verify: 'aza_quality',
+      archive: 'aza_finish',
     };
-    return tools[stage] || 'aza_loop_next';
+    return tools[stage] || 'aza_loop';
   }
 
   // ── 5-Question Reboot Test ──

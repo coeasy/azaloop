@@ -47,7 +47,14 @@ export function getWriteGuardConfig(currentPhase: string): WriteGuardConfig {
     design: {
       currentPhase: 'design',
       lockedFiles: [],
-      allowedWrites: ['design.md', 'diagrams/**', 'tasks.md'],
+      allowedWrites: [
+        'design.md',
+        'diagrams/**',
+        'tasks.md',
+        'proposal.md',
+        'change.yaml',
+        'openspec/changes/**',
+      ],
     },
     build: {
       currentPhase: 'build',

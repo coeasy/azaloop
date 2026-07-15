@@ -215,10 +215,19 @@ export function parseCapabilityMatrix(text: string): CapabilityMatrix {
           if (clientEntry) clientEntry.tier = value;
         }
       } else if (key === 'capabilities') {
-        // start of capabilities map; keep accumulating
+        // start of capabilities map; keys follow at indent 6
       } else {
+        // Allow inline cap at indent 4 for flat fixtures
         currentCapabilities[key] = parseScalar(value);
       }
+      continue;
+    }
+    // capability entries under `capabilities:` (indent 6)
+    if (indent >= 6) {
+      if (!currentClient || !currentCapabilities) continue;
+      const m = trimmed.match(/^([a-z0-9_]+):\s*(.*)$/);
+      if (!m || !m[1] || m[2] === undefined) continue;
+      currentCapabilities[m[1]] = parseScalar(m[2].trim());
     }
   }
   return matrix;

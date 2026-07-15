@@ -134,8 +134,8 @@ describe('MCPEventBridge wrapping', () => {
 
       // Simulation provides the next_action based on current stage
       expect(result.next_action).toBeDefined();
-      expect(result.next_action.tool).toBe('aza_prd_generate'); // stage is 'open'
-      expect(result.next_action.action).toBe('continue_open');
+      expect(result.next_action.tool).toBe('aza_prd'); // stage is 'open'
+      expect(result.next_action.action).toBe('review');
     });
   });
 

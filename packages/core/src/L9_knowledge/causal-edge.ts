@@ -1,6 +1,8 @@
 /**
  * v14 — v13-P7.3: Causal Edge Graph
  *
+ * @status deferred-experimental — not on critical MCP full-auto path (P1-3 orphan triage).
+ *
  * A lightweight in-memory knowledge-graph used by the L9 knowledge
  * injection engine. Each edge is a typed directed relation between two
  * keys (e.g. `fromKey: 'aza-spec/loop-001'`, `toKey: 'aza-adr/0005'`).

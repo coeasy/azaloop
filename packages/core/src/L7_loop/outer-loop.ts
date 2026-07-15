@@ -144,6 +144,21 @@ export async function defaultTriage(
 export function createDefaultStoryProvider(stateManager: { getState: () => any }): StoryProvider {
   return async () => {
     const state = stateManager.getState();
+    // Prefer outer board stories (multi-task batch) when present
+    const board = state.loops?.outer?.board;
+    const boardIds = [
+      ...(board?.in_progress || []),
+      ...(board?.pending || []),
+    ].filter(Boolean);
+    if (boardIds.length > 0) {
+      return boardIds.map((id: string, index: number) => ({
+        id,
+        title: String(id),
+        priority: boardIds.length - index,
+        started: (board?.in_progress || []).includes(id),
+      }));
+    }
+
     const stages = state.pipeline?.stages || {};
     const stageOrder: Stage[] = ['open', 'design', 'build', 'verify', 'archive'];
     

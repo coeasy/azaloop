@@ -343,7 +343,7 @@ export function scanDiff(azaDir: string, candidateChange: string): ScanDiffResul
     // Extract MUST NOT / DO NOT phrases from the body
     const mustNotMatches = extractMustNotPhrases(adr.body);
     for (const phrase of mustNotMatches) {
-      if (candidateChange.toLowerCase().includes(phrase.toLowerCase())) {
+      if (phraseMatchesChange(phrase, candidateChange)) {
         result.violations.push({
           adrId: adr.id,
           reason: `ADR-${adr.id} forbids: "${phrase}"`,
@@ -380,6 +380,25 @@ function extractMustNotPhrases(body: string): string[] {
     }
   }
   return phrases;
+}
+
+/**
+ * Match a MUST NOT phrase against a candidate change.
+ * Full-phrase match first; then distinctive code-like tokens (e.g. console.log).
+ */
+function phraseMatchesChange(phrase: string, candidateChange: string): boolean {
+  const lowerChange = candidateChange.toLowerCase();
+  const lowerPhrase = phrase.toLowerCase();
+  if (lowerChange.includes(lowerPhrase)) return true;
+  const codeTokens = phrase.match(/[A-Za-z_][\w.]{3,}/g) ?? [];
+  for (const tok of codeTokens) {
+    // Skip generic English words that appear in policy prose
+    if (/^(use|using|used|production|code|never|always|should|must|not)$/i.test(tok)) {
+      continue;
+    }
+    if (lowerChange.includes(tok.toLowerCase())) return true;
+  }
+  return false;
 }
 
 /**

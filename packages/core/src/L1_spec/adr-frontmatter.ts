@@ -50,15 +50,14 @@ export function splitFrontmatter(markdown: string): { frontmatter: string; body:
   if (firstLine.trim() !== '---') {
     return { frontmatter: '', body: markdown };
   }
-  // Find the closing `---`
+  // Find the closing `---` on its own line AFTER the frontmatter body
   const rest = firstLineEnd === -1 ? '' : trimmed.slice(firstLineEnd + 1);
-  const closeMatch = rest.match(/^---[ \t]*\r?\n/);
-  if (!closeMatch) {
+  const closeMatch = rest.match(/(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/);
+  if (!closeMatch || closeMatch.index === undefined) {
     return { frontmatter: '', body: markdown };
   }
-  const closeStart = closeMatch[0].length;
-  const frontmatter = rest.slice(0, closeStart - closeMatch[0].length).replace(/\r?\n?$/, '');
-  const body = rest.slice(closeStart);
+  const frontmatter = rest.slice(0, closeMatch.index).replace(/\r?\n$/, '');
+  const body = rest.slice(closeMatch.index + closeMatch[0].length);
   return { frontmatter, body };
 }
 

@@ -1,29 +1,33 @@
 /**
  * OpenSpec Change Folder Generator (T23)
  *
- * Synthesizes the ralphy-openspec artifact flow into azaloop's L1_spec layer.
- * Mirrors the `openspec/changes/<slug>/{proposal,design,tasks}.md` + `specs/<capability>/spec.md`
- * four-piece set, allowing spec-first industrial-grade change management.
+ * Aligns with upstream OpenSpec / ralphy three-file layout:
+ *   openspec/changes/<slug>/{proposal,design,tasks}.md
+ * Specs are isolated per change (draft-safe), then apply/archive may merge:
+ *   openspec/changes/<slug>/specs/<capability>/spec.md
  *
- * Reference: wenqingyu/ralphy-openspec (https://github.com/wenqingyu/ralphy-openspec)
+ * Lean rules (azaloop):
+ *   - Do NOT embed Execution Contract / task_batches into proposal.md
+ *   - proposal ends with a Contract pointer to `.aza/contract.md`
+ *   - tasks.md uses structured verify / ac / deps sub-lines
+ *   - optional change.yaml sidecar for machine status (synced from same input)
  *
- * File layout produced by `writeChangeFolder`:
- *   <baseDir>/openspec/changes/<slug>/proposal.md
- *   <baseDir>/openspec/changes/<slug>/design.md
- *   <baseDir>/openspec/changes/<slug>/tasks.md
- *   <baseDir>/openspec/changes/<capability>/spec.md
- *
- * Sections enforced (per ralphy-openspec convention):
- *   proposal.md: ## Why / ## What Changes / ## Impact / ## Non-Goals / ## Risks
- *   spec.md:     ## ADDED Requirements / ## MODIFIED Requirements / ## REMOVED Requirements
- *   tasks.md:    `1.1 [ ]` checkbox + verification remark
- *   design.md:   ## Technical Approach / ## Open Questions / ## Trade-offs
+ * Reference: wenqingyu/ralphy-openspec
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 
 // ── Public types ─────────────────────────────────────────────
+
+export interface ChangeTaskInput {
+  id: string;
+  title: string;
+  verification?: string;
+  ac?: string[];
+  deps?: string[];
+  status?: 'pending' | 'done' | 'blocked';
+}
 
 export interface ChangeInput {
   /** User's raw intent / one-line description. */
@@ -53,7 +57,7 @@ export interface ChangeInput {
   /** Initial REMOVED requirements. */
   removedRequirements?: string[];
   /** Initial tasks checklist. */
-  tasks?: Array<{ id: string; title: string; verification?: string }>;
+  tasks?: ChangeTaskInput[];
   /** Technical approach paragraphs. */
   technicalApproach?: string[];
   /** Open questions to resolve. */
@@ -61,16 +65,16 @@ export interface ChangeInput {
   /** Trade-offs considered. */
   tradeoffs?: Array<{ choice: string; alternative: string; rationale: string }>;
   /**
-   * v13 — P3.1: optional ExecutionContract reference. When provided,
-   * `writeChangeFolder` injects a `## Execution Contract` section at the
-   * top of `proposal.md` referencing the contract's `intent_lock` and
-   * `task_batches`. This is the hard bridge between OpenSpec and the
-   * spec-superflow execution contract.
+   * Pointer-only contract ref (never inject task_batches into proposal).
+   * Defaults to `.aza/contract.md` when intent_lock is present.
    */
   contract?: {
     intent_lock?: string;
-    task_batches?: Array<{ id: string; title: string; verification?: string }>;
+    /** Absolute or repo-relative path; default `.aza/contract.md`. */
+    path?: string;
   };
+  /** Write optional change.yaml sidecar (default true). */
+  writeSidecar?: boolean;
 }
 
 export interface ChangeFolder {
@@ -78,6 +82,7 @@ export interface ChangeFolder {
   design: string;
   tasks: string;
   specs: string;
+  sidecar?: string;
   folderPath: string;
   files: string[];
 }
@@ -101,8 +106,9 @@ function buildProposal(input: ChangeInput): string {
   const whatChanges = input.whatChanges ?? [`Implement: ${input.intent}`];
   const nonGoals = input.nonGoals ?? [];
   const risks = input.risks ?? [];
+  const contractPath = input.contract?.path ?? (input.contract ? '.aza/contract.md' : undefined);
 
-  return `# Change: ${input.slug}
+  const body = `# Change: ${input.slug}
 
 > Capability: \`${input.capability}\` · Date: ${date} · Author: ${author}
 > Intent: ${input.intent}
@@ -128,6 +134,13 @@ ${nonGoals.length === 0 ? '_None specified._' : nonGoals.map((g) => `- ${g}`).jo
 ## Risks
 
 ${risks.length === 0 ? '_None specified._' : risks.map((r) => `- ${r}`).join('\n')}
+`;
+
+  if (!contractPath) return body;
+  return `${body}
+## Contract
+
+Contract: \`${contractPath}\` (source of truth for intent lock / task batches — do not duplicate here)
 `;
 }
 
@@ -173,33 +186,43 @@ ${removedSection}
 }
 
 function buildTasks(input: ChangeInput): string {
-  const tasks = input.tasks ?? [
+  const tasks: ChangeTaskInput[] = input.tasks ?? [
     { id: '1.1', title: `Implement: ${input.intent}`, verification: 'Code review approved' },
     { id: '1.2', title: 'Write tests (TDD)', verification: 'All tests green' },
     { id: '1.3', title: 'Update documentation', verification: 'Docs review approved' },
   ];
   const date = input.date ?? todayISO();
 
+  const blocks = tasks.map((t) => {
+    const checked = t.status === 'done' ? 'x' : ' ';
+    const lines = [`- [${checked}] **${t.id}** ${t.title}`];
+    if (t.verification) lines.push(`  - verify: \`${t.verification}\``);
+    if (t.ac && t.ac.length > 0) lines.push(`  - ac: ${t.ac.map((a) => `\`${a}\``).join(', ')}`);
+    if (t.deps && t.deps.length > 0) lines.push(`  - deps: ${t.deps.map((d) => `\`${d}\``).join(', ')}`);
+    return lines.join('\n');
+  });
+
   return `# Tasks: ${input.slug}
 
 > Capability: \`${input.capability}\` · Date: ${date}
 
-${tasks
-  .map((t) => `- [ ] **${t.id}** ${t.title}${t.verification ? ` _(verification: ${t.verification})_` : ''}`)
-  .join('\n')}
+${blocks.join('\n')}
 `;
 }
 
 function buildDesign(input: ChangeInput): string {
   const date = input.date ?? todayISO();
-  const approach = input.technicalApproach ?? [
-    `1. Add the core implementation for "${input.intent}".`,
-    `2. Wire it into the existing ${input.capability} module.`,
-    `3. Expose a typed interface for downstream consumers.`,
-  ];
+  const approach =
+    input.technicalApproach && input.technicalApproach.length > 0
+      ? input.technicalApproach
+      : [
+          `- Keep OpenSpec three-piece (proposal/design/tasks) lean; contract lives only in \`.aza/contract.md\`.`,
+          `- Implement: ${input.intent}`,
+        ];
   const openQ = input.openQuestions ?? [];
   const tradeoffs = input.tradeoffs ?? [];
 
+  // Design body must be >=80 chars for design-ready gate (without filler essays).
   return `# Design: ${input.slug}
 
 > Capability: \`${input.capability}\` · Date: ${date}
@@ -224,11 +247,46 @@ ${
 `;
 }
 
+function yamlQuote(s: string): string {
+  if (/[:#\n"'{}[\],]|^\s|\s$/.test(s)) {
+    return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  }
+  return s;
+}
+
+function buildSidecar(input: ChangeInput): string {
+  const tasks = input.tasks ?? [];
+  const lines: string[] = [
+    `schema: azaloop.change/v1`,
+    `slug: ${input.slug}`,
+    `capability: ${input.capability}`,
+    `status: draft`,
+    `updated_at: ${yamlQuote(new Date().toISOString())}`,
+    `intent: ${yamlQuote(input.intent)}`,
+  ];
+  if (input.contract) {
+    lines.push(`contract_ref: ${yamlQuote(input.contract.path ?? '.aza/contract.md')}`);
+  }
+  lines.push('tasks:');
+  if (tasks.length === 0) {
+    lines.push('  []');
+  } else {
+    for (const t of tasks) {
+      lines.push(`  - id: ${yamlQuote(t.id)}`);
+      lines.push(`    title: ${yamlQuote(t.title)}`);
+      lines.push(`    status: ${t.status ?? 'pending'}`);
+      if (t.verification) lines.push(`    verify: ${yamlQuote(t.verification)}`);
+      if (t.ac && t.ac.length) lines.push(`    ac: [${t.ac.map(yamlQuote).join(', ')}]`);
+      if (t.deps && t.deps.length) lines.push(`    deps: [${t.deps.map(yamlQuote).join(', ')}]`);
+    }
+  }
+  return `${lines.join('\n')}\n`;
+}
+
 // ── Public API ──────────────────────────────────────────────
 
 /**
  * Build a {@link ChangeFolder} in-memory. Does NOT touch the filesystem.
- * This is the pure-data core; {@link writeChangeFolder} persists it.
  */
 export function scaffoldChange(input: ChangeInput): ChangeFolder {
   if (!input.intent?.trim()) {
@@ -244,14 +302,19 @@ export function scaffoldChange(input: ChangeInput): ChangeFolder {
     throw new Error(`scaffoldChange: capability must be kebab-case (got "${input.capability}")`);
   }
 
-  let proposal = buildProposal(input);
+  const proposal = buildProposal(input);
+  const writeSidecar = input.writeSidecar !== false;
+  const sidecar = writeSidecar ? buildSidecar(input) : undefined;
 
-  // v13 — P3.1: if a contract is provided, inject a `## Execution Contract`
-  // section at the top of the proposal so the build stage has a hard
-  // bridge to the approved intent.
-  if (input.contract) {
-    const contractSection = buildContractSection(input.contract);
-    proposal = contractSection + '\n' + proposal;
+  const folderPath = path.join('openspec', 'changes', input.slug);
+  const files = [
+    path.join(folderPath, 'proposal.md'),
+    path.join(folderPath, 'design.md'),
+    path.join(folderPath, 'tasks.md'),
+    path.join(folderPath, 'specs', input.capability, 'spec.md'),
+  ];
+  if (sidecar) {
+    files.push(path.join(folderPath, 'change.yaml'));
   }
 
   return {
@@ -259,39 +322,14 @@ export function scaffoldChange(input: ChangeInput): ChangeFolder {
     design: buildDesign(input),
     tasks: buildTasks(input),
     specs: buildSpec(input),
-    folderPath: path.join('openspec', 'changes', input.slug),
-    files: [
-      path.join('openspec', 'changes', input.slug, 'proposal.md'),
-      path.join('openspec', 'changes', input.slug, 'design.md'),
-      path.join('openspec', 'changes', input.slug, 'tasks.md'),
-      path.join('openspec', 'specs', input.capability, 'spec.md'),
-    ],
+    sidecar,
+    folderPath,
+    files,
   };
 }
 
 /**
- * v13 — P3.1: build the `## Execution Contract` section that bridges
- * OpenSpec → ExecutionContract (T17).
- */
-function buildContractSection(contract: NonNullable<ChangeInput['contract']>): string {
-  const lines: string[] = ['## Execution Contract', ''];
-  if (contract.intent_lock) {
-    lines.push(`**Intent Lock**: \`${contract.intent_lock}\``);
-  }
-  if (contract.task_batches && contract.task_batches.length > 0) {
-    lines.push('', '**Task Batches**:', '');
-    for (const b of contract.task_batches) {
-      lines.push(`- \`${b.id}\`: ${b.title}${b.verification ? ` — _${b.verification}_` : ''}`);
-    }
-  }
-  lines.push('');
-  return lines.join('\n');
-}
-
-/**
  * Persist a {@link ChangeFolder} to disk under `<baseDir>/openspec/...`.
- * Creates directories as needed. Returns the relative path and the list of
- * written files (relative to baseDir).
  */
 export async function writeChangeFolder(
   input: ChangeInput,
@@ -309,13 +347,15 @@ export async function writeChangeFolder(
   await writeOne(folder.files[1]!, folder.design);
   await writeOne(folder.files[2]!, folder.tasks);
   await writeOne(folder.files[3]!, folder.specs);
+  if (folder.sidecar && folder.files[4]) {
+    await writeOne(folder.files[4], folder.sidecar);
+  }
 
   return { path: folder.folderPath, files: folder.files };
 }
 
 /**
  * Archive a change to `openspec/changes/archive/YYYY-MM-DD-<slug>/`.
- * Returns the new archive path (relative to baseDir).
  */
 export async function archiveChange(
   slug: string,
@@ -343,8 +383,6 @@ export async function archiveChange(
 
 /**
  * List all changes under `openspec/changes/`, distinguishing draft / archived.
- * `applied` is currently always false (no applied/<slug>/ convention is set in
- * this Phase — Phase 4 may add an applied folder).
  */
 export async function listChanges(baseDir: string): Promise<ChangeListEntry[]> {
   const root = path.join(baseDir, 'openspec', 'changes');
@@ -380,7 +418,6 @@ export async function listChanges(baseDir: string): Promise<ChangeListEntry[]> {
     const archived = await fs.promises.readdir(archiveRoot, { withFileTypes: true });
     for (const entry of archived) {
       if (!entry.isDirectory()) continue;
-      // expected: YYYY-MM-DD-<slug>
       const match = entry.name.match(/^(\d{4}-\d{2}-\d{2})-(.+)$/);
       if (!match) continue;
       const archiveDir = path.join(archiveRoot, entry.name);
@@ -402,3 +439,6 @@ export async function listChanges(baseDir: string): Promise<ChangeListEntry[]> {
 
   return out;
 }
+
+/** Runtime fingerprint so MCP health can prove this lean scaffold is loaded. */
+export const CHANGE_FOLDER_FINGERPRINT = 'lean-three-piece-v1-no-contract-embed';

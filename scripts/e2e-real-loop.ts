@@ -13,7 +13,7 @@
  * ALL real artifacts up front; the engine verifies them with REAL tools.
  * The engine never fabricates metrics.
  */
-import { LoopController } from '@azaloop/core';
+import { LoopController, PRDGenerator } from '@azaloop/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -24,29 +24,15 @@ fs.mkdirSync(AZA, { recursive: true });
 
 function write(p: string, c: string) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, c); }
 
-// ── open: strong PRD that passes the REAL 14-dim checker (p0=0, p1<=3) ──
-const prd = {
-  id: 'PRD-E2E', title: 'End-to-End Full-Auto Loop Demo', version: '0.1.0',
-  created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-  overview: 'This demo proves AzaLoop drives a full-auto development loop. ' +
-    'The pain point is that autonomous coding agents lose context between sessions and ' +
-    'skip quality gates. AzaLoop solves this with a PRD-driven three-level loop and ' +
-    'real verification gates so work stays on track from idea to archived delivery.',
-  goals: ['prove core link is connected', 'prove no simulated flow'],
-  target_users: ['Backend Developer', 'Platform Engineer'],
-  functional_requirements: [{ id: 'FR-1', description: 'demo functional requirement', priority: 'P0' }],
-  non_functional_requirements: [{ id: 'NFR-1', description: 'loop must complete under 5 minutes', category: 'performance' }],
-  stories: [{
-    id: 'STORY-1', title: 'Demo story',
-    description: 'A demo story that adds two numbers and verifies the result with a unit test.',
-    priority: 'P0', complexity: 'L1',
-    acceptance_criteria: [{ id: 'AC-1', description: 'adds numbers', testable: true, status: 'pending' }],
-    dependencies: [], status: 'pending',
-  }],
-  architecture: [{ type: 'system', mermaid: 'graph TD; A-->B', description: 'System architecture of the demo.' }],
-  acceptance_criteria: [{ id: 'AC-1', description: 'adds numbers', testable: true, status: 'pending' }],
-  risks: [{ description: 'context loss between sessions', probability: 'medium', mitigation: 'RESUME.md + memory' }],
-};
+// ── open: REAL PRD from the generator (passes the 14-dim gate, p0=0/p1=0) ──
+const prd = new PRDGenerator().generate({
+  title: 'End-to-End Full-Auto Loop Demo',
+  description:
+    'This demo proves AzaLoop drives a full-auto development loop. The pain point is that ' +
+    'autonomous coding agents lose context between sessions and skip quality gates. AzaLoop ' +
+    'solves this with a PRD-driven three-level loop and real verification gates so work stays ' +
+    'on track from idea to archived delivery.',
+});
 write(path.join(AZA, 'prd.json'), JSON.stringify(prd, null, 2));
 
 // ── design: real architecture doc + 7 diagrams ──

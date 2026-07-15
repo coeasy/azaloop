@@ -1,31 +1,29 @@
-<!-- V17 — 引用共享模板 -->
-> 本文件是共享模板的引用，完整内容见 `templates/clients/_shared/v16-auto-loop.md`
+<!-- 共享模板: templates/clients/_shared/v17-continue.md -->
+# AzaLoop Auto-Continue（V17 · 8 工具）
 
-# Claude Code 客户端配置 — AzaLoop 自动循环规则（V17）
+## 会话启动（MANDATORY）
 
-<!-- 引用共享模板内容 -->
-_请参考共享模板 [templates/clients/_shared/v16-auto-loop.md](https://github.com/azaloop/azaloop/tree/main/templates/clients/_shared/v16-auto-loop.md)_
+1. `aza_session(action=continue)`；无 RESUME 则 `calibrate`
+2. 跟随 `next_action` — 不要问用户是否继续
 
-## Claude Code 特定配置
+## 唯一工具面
 
-### MCP 配置
-- 使用 `CLAUDE.md` 配置 MCP 服务器
-- 使用 `agents/azaloop.json` 配置 agent 模式
-- 使用 `plugin.json` 配置插件
+`aza_session` · `aza_prd` · `aza_loop` · `aza_spec` · `aza_quality` · `aza_finish` · `aza_memory` · `aza_meta`
 
-### 自动循环执行
-用户确认 PRD 后，使用 `aza_auto_loop` 工具自动执行整个循环：
+（`aza_auto_loop` / `aza_task_*` / `aza_context_*` 仅为 legacy 别名，禁止当作主指令。）
 
-1. **后台自动循环**（推荐）：调用 `aza_auto_loop`（action="auto"）启动后台调度器
-2. **单步模式**：调用 `aza_auto_loop`（action="step"）执行一步
-3. **全自动模式**：调用 `aza_auto_loop`（action="full"）执行完整循环
+## 全自动脊柱
 
-### 钩子脚本
-- `hooks/pre-tool.sh`：工具调用前执行
-- `hooks/post-tool.sh`：工具调用后执行，自动更新 STATE
+```
+aza_prd(review[, auto_approve=true])
+→ aza_loop(full)
+→ awaitingAction → aza_spec / aza_quality
+→ aza_loop(report_tool)
+→ aza_finish(ship)
+```
 
-## 重要规则
-- 每次用户提交新需求，必须先走 PRD 先行流程
-- 用户确认后，使用 `aza_auto_loop` 全自动执行直到完成
-- 每次工具调用都会自动更新 STATE 和预写 RESUME
-- 所有状态变更自动落盘到 STATE.yaml 和 RESUME.md
+无人值守：设置 `AZA_AUTO_APPROVE_PRD=true` 或 review 时传 `auto_approve=true`。
+
+## MCP 配置
+
+在客户端配置 `mcp.json`，指向 `@azaloop/mcp-server` 或本地 `packages/mcp-server/dist/server.js`，并设置项目 `cwd`。

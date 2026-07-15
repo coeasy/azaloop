@@ -80,16 +80,20 @@ foreach ($f in @("LICENSE", "README.md", "README.en.md", "WELCOME.md")) {
   }
 }
 
-# Step 3: Add to PATH
+# Step 3: Add to PATH (User + current session)
 if (-not $Portable) {
   Write-Host "`n  [3/4] Adding to PATH..."
   $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
   if ($userPath -notlike "*$TARGET_DIR*") {
     [Environment]::SetEnvironmentVariable("Path", "$userPath;$TARGET_DIR", "User")
     Write-Host "    ✓ Added to user PATH"
-    Write-Host "    Run: refreshenv  (or restart terminal)"
   } else {
-    Write-Host "    ✓ Already in PATH"
+    Write-Host "    ✓ Already in user PATH"
+  }
+  # Make `aza` available in THIS shell without restart
+  if ($env:Path -notlike "*$TARGET_DIR*") {
+    $env:Path = "$TARGET_DIR;$env:Path"
+    Write-Host "    ✓ Current session PATH updated (aza available now)"
   }
 }
 

@@ -1,18 +1,41 @@
 ---
-description: AzaLoop 0.1.0 development rules
+description: AzaLoop 0.2 — Cursor full-auto rules (8 MCP tools)
 globs: *
+alwaysApply: true
 ---
-# AzaLoop Development Rules
 
-Follow the 5-stage pipeline: open → design → build → verify → archive.
-Each stage completes its guard checks before advancing.
+# AzaLoop Cursor Full-Auto Protocol
 
-## Quality Gates
-Before marking any story done:
-1. TypeScript compilation passes
-2. All tests pass
-3. Security scan passes (no critical)
-4. Acceptance criteria verified
+You are connected to AzaLoop MCP with **exactly 8 tools**:
+`aza_session` · `aza_prd` · `aza_loop` · `aza_spec` · `aza_quality` · `aza_finish` · `aza_memory` · `aza_meta`
 
-## Session Start
-Execute continue.md rules on every session start.
+## Hard rules (non-negotiable)
+
+1. **Follow `next_action` immediately.** After every MCP tool result, if `next_action` is present and `action` is not `wait` / `escalate` / `done`, call that tool next — do **not** ask the user to click Continue.
+2. **`awaitingAction`:** If `data.awaitingAction` or `data.status === 'awaiting_agent'` exists, execute that tool (usually `aza_spec` / `aza_quality`), then call `aza_loop` with `action: "report_tool"` and `tool_name` set.
+3. **Never stop mid-loop** to ask “should I continue?” unless `next_action.action` is `wait` or `escalate`.
+4. **Use only the 8 unified tools** (legacy names are aliases but prefer unified).
+
+## Canonical full-auto sequence
+
+```
+aza_session(action=calibrate)
+→ aza_prd(action=review, title, description)     # OpenSpec scaffold on approve
+→ [user confirms once] OR auto_approve=true
+→ aza_prd(action=approve)
+→ aza_loop(action=full)
+→ (repeat) aza_spec / aza_quality + aza_loop(report_tool)
+→ aza_finish(action=ship)
+```
+
+## Unattended mode
+
+If `.aza` / env has auto-approve (`AZA_AUTO_APPROVE_PRD=true` or `auto_approve: true` on review), after `review` immediately follow returned `next_action` to approve without asking the user.
+
+## Stages
+
+open → design → build → verify → archive. Do not call `aza_prd` after design unless modifying requirements. Prefer `aza_loop(full)` over manual `next` when driving.
+
+## On session start / after stop
+
+Call `aza_session(action=continue)` if RESUME.md / unfinished STATE exists; otherwise `calibrate`.

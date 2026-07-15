@@ -67,6 +67,7 @@ const STOP_WORDS = new Set([
   'you', 'your', 'i', 'me', 'my', 'we', 'us', 'our',
   'use', 'used', 'using', 'should', 'would', 'could', 'will',
   'not', 'no', 'so', 'as', 'do', 'does', 'did', 'have', 'has', 'had',
+  'when', 'where', 'what', 'who', 'how', 'why',
 ]);
 
 // ── Public API ───────────────────────────────────────────────

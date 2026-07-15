@@ -385,6 +385,39 @@ export class SkillRegistry {
         task_sources: ['md'],
         language: 'both', author: 'azaloop-core', registered_at: now,
       } as any,
+      {
+        name: 'brainstorming', version: '1.0.0', type: 'workflow',
+        description: 'Use when exploring a new feature or choosing among approaches before any code — forces options and approval.',
+        tags: ['process', 'brainstorm', 'superpowers'],
+        when_to_use: 'exploring a new feature, clarifying requirements, or choosing between approaches before coding',
+        red_flags: [
+          { thought: 'Just start coding.', reality: 'Unexamined assumptions waste the next three commits.' },
+        ],
+        namespaces: ['aza-process'],
+        language: 'both', author: 'azaloop-core', registered_at: now,
+      } as any,
+      {
+        name: 'tdd-process', version: '1.0.0', type: 'workflow',
+        description: 'Use when implementing behavior that must be test-covered — RED before GREEN.',
+        tags: ['process', 'tdd', 'superpowers'],
+        when_to_use: 'implementing behavior that should be covered by tests; any bug fix; new API',
+        red_flags: [
+          { thought: 'Tests later.', reality: 'Later never ships.' },
+        ],
+        namespaces: ['aza-process'],
+        language: 'both', author: 'azaloop-core', registered_at: now,
+      } as any,
+      {
+        name: 'verification-before-completion', version: '1.0.0', type: 'workflow',
+        description: 'Use when about to claim done/fixed/ship — require evidence from aza_quality first.',
+        tags: ['process', 'verify', 'superpowers'],
+        when_to_use: 'about to claim work is done, fixed, or ready to ship',
+        red_flags: [
+          { thought: 'It looks good in the editor.', reality: 'Run the gates.' },
+        ],
+        namespaces: ['aza-process'],
+        language: 'both', author: 'azaloop-core', registered_at: now,
+      } as any,
     ];
     for (const skill of core) {
       this.register(skill);

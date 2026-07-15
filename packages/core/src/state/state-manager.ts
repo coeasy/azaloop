@@ -238,6 +238,13 @@ export class StateManager {
   }
 
   async incrementIteration(): Promise<number> {
+    // Reload from disk first so we do not overwrite pipeline advances
+    // written by LoopController (separate StateManager instance).
+    try {
+      await this.load();
+    } catch {
+      /* keep in-memory state if file missing */
+    }
     this.state.loop.iteration += 1;
     this.state.updated_at = new Date().toISOString();
     await this.save();

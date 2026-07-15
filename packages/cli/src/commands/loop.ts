@@ -1,4 +1,4 @@
-import { LoopController, PRDReviewGate, StateManager, ResumeGenerator } from '@azaloop/core';
+import { LoopController, ConfigLoader, PRDReviewGate, StateManager, ResumeGenerator } from '@azaloop/core';
 import * as path from 'path';
 import * as readline from 'readline';
 
@@ -38,9 +38,16 @@ export async function loopCommand(options: LoopOptions): Promise<void> {
   const azaDir = options.dir || path.join(process.cwd(), '.aza');
   const maxIter = options.maxIterations ?? 50;
   const prdTimeoutMs = options.prdTimeoutMs ?? 60_000;
+  const projectRoot = path.dirname(azaDir);
+  const loader = new ConfigLoader(projectRoot);
+  const config = loader.getDefaultConfig();
   const lc = new LoopController({
+    maxIterations: config.loop.max_iterations,
+    maxStageIterations: 5,
     enableV12: true,
     azaDir,
+    projectRoot,
+    config,
   });
 
   let stage = options.stage as any;

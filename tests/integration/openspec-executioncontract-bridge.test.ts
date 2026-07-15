@@ -112,7 +112,7 @@ describe('v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract', () => 
     expect(fs.existsSync(openspecPath)).toBe(true);
   });
 
-  it('5) PRDReviewGate.approve() with default source (aza-prd) does NOT set openspec_path', async () => {
+  it('5) PRDReviewGate.approve() with source=aza-prd does NOT set openspec_path', async () => {
     const stateManager = new StateManager(azaDir);
     await stateManager.load();
     const resumeGenerator = new ResumeGenerator(azaDir);
@@ -121,14 +121,28 @@ describe('v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract', () => 
     await gate.review({
       title: 'Simple feature',
       description: 'Just a simple feature',
+      source: 'aza-prd',
     });
     const result = await gate.approve();
     expect(result.approved).toBe(true);
-    // The contract path should still be present (always written)
     expect(result.data).toBeDefined();
     expect(result.data!.contract_path).toBeDefined();
-    // But openspec_path should be undefined
     expect(result.data!.openspec_path).toBeUndefined();
+  });
+
+  it('5b) default review source writes openspec_path', async () => {
+    const stateManager = new StateManager(azaDir);
+    await stateManager.load();
+    const resumeGenerator = new ResumeGenerator(azaDir);
+    const gate = new PRDReviewGate({ stateManager, resumeGenerator, timeoutMs: 1000 });
+
+    await gate.review({
+      title: 'Default OpenSpec feature',
+      description: 'Should scaffold openspec by default',
+    });
+    const result = await gate.approve();
+    expect(result.approved).toBe(true);
+    expect(result.data!.openspec_path).toBeDefined();
   });
 
   it('6) PRDReviewGate.approve() HARD-GATE with answers is approved', async () => {

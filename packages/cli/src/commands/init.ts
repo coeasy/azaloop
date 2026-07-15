@@ -2,6 +2,7 @@ import { detectClient, getClient, getAllClients } from '@azaloop/core';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as fsSync from 'fs';
+import { normalizeCliPath } from '../util/path';
 
 export interface InitOptions {
   client?: string;
@@ -49,8 +50,10 @@ function mcpConfigJson(): object {
     mcpServers: {
       azaloop: {
         command: 'npx',
-        args: ['@azaloop/mcp-server'],
-        env: {},
+        args: ['-y', '@azaloop/mcp-server'],
+        env: {
+          AZA_AUTO_APPROVE_PRD: 'true',
+        },
       },
     },
   };
@@ -120,19 +123,21 @@ function rulesContent(clientName: string): string {
 You are running AzaLoop in **${clientName}**.
 
 ## Session Start (MANDATORY)
-1. Call \`aza_session_start\` to initialize the system
-2. Call \`aza_context calibrate\` to load current state
-3. Call \`aza_conventions list\` to load learned conventions
+1. Call \`aza_session(action=calibrate)\` (or continue if RESUME.md exists)
+2. Follow \`next_action\` from every MCP response — do not ask the user to click Continue
+
+## Unified tools (exactly 8)
+\`aza_session\` · \`aza_prd\` · \`aza_loop\` · \`aza_spec\` · \`aza_quality\` · \`aza_finish\` · \`aza_memory\` · \`aza_meta\`
 
 ## Auto-Loop (MANDATORY)
-Always follow the \`next_action\` chain from MCP tool responses.
+\`aza_prd(review)\` → approve → \`aza_loop(full)\` → execute awaitingAction (\`aza_spec\`/\`aza_quality\`) → \`aza_loop(report_tool)\` → \`aza_finish(ship)\`
 
 ## 5-Stage Pipeline
-1. **open** — aza_prd_generate → aza_prd_validate
-2. **design** — aza_task_design
-3. **build** — TDD: test first → aza_task_implement
-4. **verify** — aza_quality_check (5 gates)
-5. **archive** — aza_doc_generate → aza_conventions_extract
+1. **open** — aza_prd review/approve
+2. **design** — aza_spec design
+3. **build** — TDD → aza_spec implement
+4. **verify** — aza_quality check (gates)
+5. **archive** — aza_finish ship/archive
 
 ## Quality Gates
 - TypeScript compilation must pass
@@ -141,7 +146,7 @@ Always follow the \`next_action\` chain from MCP tool responses.
 - Acceptance criteria documented & met
 
 ## Memory
-Record significant decisions via aza_memory_record.
+Record significant decisions via aza_memory(record).
 `;
   }
   return `# AzaLoop — ${clientName} 开发规则
@@ -149,19 +154,21 @@ Record significant decisions via aza_memory_record.
 你在 ${clientName} 中运行 AzaLoop（PRD 驱动的自主开发循环引擎）。
 
 ## 会话启动（MANDATORY）
-1. 调用 aza_session_start 初始化系统
-2. 调用 aza_context calibrate 获取上下文
-3. 调用 aza_conventions list 加载已学约定
+1. 调用 aza_session(action=calibrate)（若有 RESUME.md 则 continue）
+2. 严格跟随 next_action，不要停下来问「是否继续」
+
+## 统一工具面（恰好 8 个）
+aza_session · aza_prd · aza_loop · aza_spec · aza_quality · aza_finish · aza_memory · aza_meta
 
 ## 全自动循环（MANDATORY）
-每次工具返回的 next_action 必须自动执行，不得跳过。
+aza_prd(review) → approve → aza_loop(full) → 执行 awaitingAction → aza_loop(report_tool) → aza_finish(ship)
 
 ## 五阶段流水线
-- open:   aza_prd_generate → aza_prd_validate
-- design: aza_task_design
-- build:  TDD 铁律 → aza_task_implement
-- verify: aza_quality_check（五级门禁）
-- archive: aza_doc_generate → aza_conventions_extract
+- open: aza_prd review/approve
+- design: aza_spec design
+- build: TDD → aza_spec implement
+- verify: aza_quality check
+- archive: aza_finish ship
 
 ## 禁止
 - 不得跳过 next_action 链
@@ -176,25 +183,21 @@ function continueContent(clientName: string): string {
     return `# AzaLoop Auto-Continue Rules
 
 ## Session Start (MANDATORY)
-1. aza_session_start — initialize system
-2. aza_context calibrate — load context
-3. aza_conventions list — load conventions
-4. Check RESUME.md → aza_loop next to resume, or ask for requirements
+1. aza_session(calibrate|continue) — restore session
+2. Check RESUME.md → aza_loop(full) to resume, or aza_prd(review) for new work
 
 ## Auto-Loop
-aza_loop_next → next_action.tool → next_action → ... → done
+aza_loop(full) → awaitingAction → host tool → aza_loop(report_tool) → … → aza_finish(ship)
 `;
   }
   return `# AzaLoop 自动续跑规则（会话启动时首先执行）
 
 ## 会话启动（MANDATORY）
-1. aza_session_start — 初始化系统
-2. aza_context calibrate — 获取上下文
-3. aza_conventions list — 加载已学约定
-4. 检查 RESUME.md → aza_loop next 续跑 或 询问需求
+1. aza_session(calibrate|continue) — 恢复会话
+2. 检查 RESUME.md → aza_loop(full) 续跑 或 aza_prd(review) 开新需求
 
 ## 全自动循环
-aza_loop_next → next_action.tool → next_action → ... → done
+aza_loop(full) → awaitingAction → 宿主工具 → aza_loop(report_tool) → … → aza_finish(ship)
 `;
 }
 
@@ -212,7 +215,7 @@ function welcome(clientName: string): string {
   return [
     '',
     '  ╔══════════════════════════════════════════╗',
-    '  ║           AzaLoop  v12.2                 ║',
+    '  ║           AzaLoop  v0.2.0                ║',
     '  ║  PRD-Driven Autonomous Development Loop  ║',
     '  ╚══════════════════════════════════════════╝',
     '',
@@ -227,19 +230,18 @@ function usageHint(clientName: string): string {
     '  ── Next Steps ──',
     '',
     '  1. Open this project in ' + clientName,
-    '  2. Type your requirements in the chat, e.g.:',
-    '     "Create a React + TypeScript todo app"',
-    '  3. AzaLoop will auto-execute:',
-    '     session_start → PRD → loop → done!',
+    '  2. Enable MCP server "azaloop" (expect 8 tools)',
+    '  3. Paste AZA-CURSOR-PROMPT.md or describe a feature',
+    '  4. Follow next_action: session → prd → loop(full) → finish(ship)',
     '',
-    '  📖 Per-client guides: docs/clients/' + clientName + '.md',
-    '  📖 Full docs:        docs/CLIENT-INSTALLATION.md',
+    '  📖 Cursor third-party guide: docs/CURSOR-THIRD-PARTY.md',
+    '  📖 Full install docs:       docs/CLIENT-INSTALLATION.md',
     '',
   ].join('\n');
 }
 
 export async function initCommand(options: InitOptions = {}): Promise<void> {
-  const root = options.root || process.cwd();
+  const root = normalizeCliPath(options.root) || process.cwd();
 
   // ── Multi-client support: --client cursor,trae → init for each ──
   if (options.client && options.client.includes(',')) {
@@ -274,26 +276,13 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
   // ── Step 2: Create .aza directory ──
   const azaDir = path.join(root, '.aza');
   await fs.mkdir(azaDir, { recursive: true });
-  const stateYaml = `pipeline:
-  current_stage: open
-  stages:
-    open: { status: pending }
-    design: { status: pending }
-    build: { status: pending }
-    verify: { status: pending }
-    archive: { status: pending }
-loop:
-  iteration: 0
-  progress: '0%'
-  client: ${client.name}
-  model: unknown
-  max_iterations: 50
-memory: { semantic_keys: [] }
-security_findings: []
-strikes: 0
-updated_at: ${new Date().toISOString()}
-`;
-  await fs.writeFile(path.join(azaDir, 'STATE.yaml'), stateYaml, 'utf8');
+  // Use StateManager (not a hand-written template) so timestamps are
+  // correctly quoted and the file always satisfies StateSchema — otherwise
+  // js-yaml parses unquoted ISO timestamps into Date objects and
+  // StateManager.load() throws on first `aza status`/`aza continue`.
+  const { StateManager } = await import('@azaloop/core');
+  const stateManager = new StateManager(azaDir);
+  await stateManager.update({ loop: { client: client.name, model: 'unknown' } } as any);
   console.log('  ✓ .aza/STATE.yaml');
 
   await fs.writeFile(path.join(azaDir, 'RESUME.md'), '# AzaLoop Resume\n\nProject initialized.\n', 'utf8');
@@ -329,10 +318,21 @@ updated_at: ${new Date().toISOString()}
       }
     }
 
-    // Rules file
+    // Rules file — Cursor: prefer V17 template from packages templates
     if (cfg.rulesFile) {
       const rulesPath = path.join(root, cfg.configDir, cfg.rulesFile);
-      const ok = await writeFileSafe(rulesPath, rulesContent(client.name));
+      let body = rulesContent(client.name);
+      if (client.name === 'cursor') {
+        const tmpl = path.join(__dirname, '..', '..', '..', '..', 'templates', 'clients', 'cursor', 'rules', 'azaloop.mdc');
+        try {
+          if (fsSync.existsSync(tmpl)) {
+            body = await fs.readFile(tmpl, 'utf8');
+          }
+        } catch {
+          /* keep generated body */
+        }
+      }
+      const ok = await writeFileSafe(rulesPath, body);
       if (ok) {
         const rel = path.relative(root, rulesPath);
         console.log(`  ✓ ${rel}`);

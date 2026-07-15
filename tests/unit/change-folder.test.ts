@@ -30,28 +30,33 @@ describe('OpenSpec change-folder (T23)', () => {
   });
 
   describe('scaffoldChange (in-memory)', () => {
-    it('returns 4 markdown strings and a folder path', () => {
+    it('returns lean OpenSpec three-piece + change-local spec (no contract embed)', () => {
       const folder = scaffoldChange({
         intent: 'Add OAuth flow',
         capability: 'auth',
         slug: 'add-oauth',
+        contract: { intent_lock: 'Add OAuth flow.', path: '.aza/contract.md' },
       });
       expect(folder.proposal).toContain('## Why');
       expect(folder.proposal).toContain('## What Changes');
       expect(folder.proposal).toContain('## Impact');
       expect(folder.proposal).toContain('## Non-Goals');
       expect(folder.proposal).toContain('## Risks');
+      expect(folder.proposal).toContain('## Contract');
+      expect(folder.proposal).toContain('.aza/contract.md');
+      expect(folder.proposal).not.toContain('## Execution Contract');
+      expect(folder.proposal).not.toContain('**Task Batches**');
       expect(folder.design).toContain('## Technical Approach');
       expect(folder.design).toContain('## Open Questions');
       expect(folder.design).toContain('## Trade-offs');
       expect(folder.tasks).toMatch(/- \[ \] \*\*1\.1\*\*/);
-      expect(folder.tasks).toMatch(/- \[ \] \*\*1\.2\*\*/);
-      expect(folder.tasks).toMatch(/- \[ \] \*\*1\.3\*\*/);
+      expect(folder.tasks).toMatch(/- verify:/);
       expect(folder.specs).toContain('## ADDED Requirements');
-      expect(folder.specs).toContain('## MODIFIED Requirements');
-      expect(folder.specs).toContain('## REMOVED Requirements');
       expect(folder.folderPath).toBe(path.join('openspec', 'changes', 'add-oauth'));
-      expect(folder.files).toHaveLength(4);
+      expect(folder.files).toContain(path.join('openspec', 'changes', 'add-oauth', 'change.yaml'));
+      expect(folder.files).toContain(
+        path.join('openspec', 'changes', 'add-oauth', 'specs', 'auth', 'spec.md'),
+      );
     });
 
     it('throws on missing intent / capability / invalid slug', () => {
@@ -77,29 +82,60 @@ describe('OpenSpec change-folder (T23)', () => {
   });
 
   describe('writeChangeFolder (filesystem)', () => {
-    it('persists 4 files at the canonical path', async () => {
+    it('persists three-piece + change-local spec + sidecar', async () => {
       const result = await writeChangeFolder(
-        { intent: 'Add OAuth', capability: 'auth', slug: 'add-oauth' },
+        { intent: 'Add OAuth', capability: 'auth', slug: 'add-oauth', contract: { path: '.aza/contract.md' } },
         tmpDir,
       );
       expect(result.path).toBe(path.join('openspec', 'changes', 'add-oauth'));
-      expect(result.files).toHaveLength(4);
       for (const rel of result.files) {
         const abs = path.join(tmpDir, rel);
         expect(fs.existsSync(abs)).toBe(true);
       }
-      const proposal = fs.readFileSync(path.join(tmpDir, result.files[0]), 'utf8');
+      const proposal = fs.readFileSync(path.join(tmpDir, result.files[0]!), 'utf8');
       expect(proposal).toContain('## Why');
+      expect(proposal).not.toContain('## Execution Contract');
     });
 
-    it('creates nested directories (capability / specs) as needed', async () => {
+    it('isolates specs under the change folder (no shared overwrite)', async () => {
       const result = await writeChangeFolder(
         { intent: 'New billing flow', capability: 'billing-v2', slug: 'new-billing' },
         tmpDir,
       );
-      const specFile = path.join(tmpDir, 'openspec', 'specs', 'billing-v2', 'spec.md');
+      const specFile = path.join(
+        tmpDir,
+        'openspec',
+        'changes',
+        'new-billing',
+        'specs',
+        'billing-v2',
+        'spec.md',
+      );
       expect(fs.existsSync(specFile)).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, 'openspec', 'specs', 'billing-v2', 'spec.md'))).toBe(false);
       expect(result.files.some((f) => f.endsWith('spec.md'))).toBe(true);
+    });
+
+    it('two drafts with same capability do not clobber each other', async () => {
+      await writeChangeFolder(
+        { intent: 'A', capability: 'core', slug: 'change-a', addedRequirements: ['MUST A'] },
+        tmpDir,
+      );
+      await writeChangeFolder(
+        { intent: 'B', capability: 'core', slug: 'change-b', addedRequirements: ['MUST B'] },
+        tmpDir,
+      );
+      const a = fs.readFileSync(
+        path.join(tmpDir, 'openspec/changes/change-a/specs/core/spec.md'),
+        'utf8',
+      );
+      const b = fs.readFileSync(
+        path.join(tmpDir, 'openspec/changes/change-b/specs/core/spec.md'),
+        'utf8',
+      );
+      expect(a).toContain('MUST A');
+      expect(b).toContain('MUST B');
+      expect(a).not.toContain('MUST B');
     });
   });
 

@@ -7,41 +7,21 @@ import { LoopController } from '@azaloop/core';
 // Valid MCP tool names as defined by getToolDefinitions() in
 // packages/mcp-server/src/index.ts
 const VALID_MCP_TOOL_NAMES: Set<string> = new Set([
+  'aza_session',
+  'aza_prd',
+  'aza_loop',
+  'aza_spec',
+  'aza_quality',
+  'aza_finish',
+  'aza_memory',
+  'aza_meta',
+  // legacy aliases still accepted during migration
   'aza_prd_generate',
-  'aza_prd_validate',
-  'aza_prd_review',
-  'aza_prd_approve',
-  'aza_prd_modify',
-  'aza_prd_cancel',
-  'aza_loop_next',
-  'aza_loop_status',
-  'aza_loop_complete',
-  'aza_loop_stop',
-  'aza_loop_set_condition',
-  'aza_loop_reset_conditions',
-  'aza_loop_stage_iterations',
   'aza_task_design',
   'aza_task_implement',
-  'aza_task_verify',
   'aza_quality_check',
-  'aza_memory_query',
-  'aza_memory_record',
-  'aza_context_calibrate',
-  'aza_context_status',
-  'aza_continue',
-  'aza_health',
   'aza_doc_generate',
-  'aza_skill_search',
-  'aza_skill_list',
-  'aza_security_scan',
-  'aza_style_check',
-  'aza_style_learn',
-  'aza_audit',
-  'aza_compliance',
-  'aza_dag',
-  'aza_loop_circuit_breaker',
-  'aza_loop_completion_gate',
-  'aza_loop_audit',
+  'aza_loop_next',
 ]);
 
 describe('LoopController tool name validation', () => {
@@ -68,31 +48,31 @@ describe('LoopController tool name validation', () => {
       lc.setCondition('prd_valid', true);
       let result = await lc.next();
       collectedTools.push(result.next_action!.tool);
-      expect(result.next_action!.tool).toBe('aza_task_design');
+      expect(result.next_action!.tool).toBe('aza_spec');
 
       // Stage: design -> set condition, advance to build
       lc.setCondition('stories_designed', true);
       result = await lc.next();
       collectedTools.push(result.next_action!.tool);
-      expect(result.next_action!.tool).toBe('aza_task_implement');
+      expect(result.next_action!.tool).toBe('aza_spec');
 
       // Stage: build -> set condition, advance to verify
       lc.setCondition('build_tested', true);
       result = await lc.next();
       collectedTools.push(result.next_action!.tool);
-      expect(result.next_action!.tool).toBe('aza_quality_check');
+      expect(result.next_action!.tool).toBe('aza_quality');
 
       // Stage: verify -> set condition, advance to archive
       lc.setCondition('quality_passed', true);
       result = await lc.next();
       collectedTools.push(result.next_action!.tool);
-      expect(result.next_action!.tool).toBe('aza_doc_generate');
+      expect(result.next_action!.tool).toBe('aza_finish');
 
       // Stage: archive -> set condition, completes
       lc.setCondition('archive_ready', true);
       result = await lc.next();
       collectedTools.push(result.next_action!.tool);
-      expect(result.next_action!.tool).toBe('aza_loop_next');
+      expect(result.next_action!.tool).toBe('aza_loop');
       expect(result.next_action!.action).toBe('done');
 
       // Assert every collected tool is a valid MCP tool name
@@ -130,7 +110,7 @@ describe('LoopController tool name validation', () => {
       expect(result.success).toBe(false);
       expect(result.next_action).toBeDefined();
       expect(VALID_MCP_TOOL_NAMES.has(result.next_action!.tool)).toBe(true);
-      expect(result.next_action!.tool).toBe('aza_loop_next');
+      expect(result.next_action!.tool).toBe('aza_loop');
       expect(result.next_action!.action).toBe('report');
     });
 
@@ -147,7 +127,7 @@ describe('LoopController tool name validation', () => {
       expect(result.success).toBe(false);
       expect(result.next_action).toBeDefined();
       expect(VALID_MCP_TOOL_NAMES.has(result.next_action!.tool)).toBe(true);
-      expect(result.next_action!.tool).toBe('aza_loop_next');
+      expect(result.next_action!.tool).toBe('aza_loop');
     });
   });
 
@@ -170,7 +150,7 @@ describe('LoopController tool name validation', () => {
 
       expect(result.next_action).toBeDefined();
       expect(VALID_MCP_TOOL_NAMES.has(result.next_action!.tool)).toBe(true);
-      expect(result.next_action!.tool).toBe('aza_loop_next');
+      expect(result.next_action!.tool).toBe('aza_loop');
       expect(result.next_action!.action).toBe('escalate');
     });
 
@@ -190,7 +170,7 @@ describe('LoopController tool name validation', () => {
 
       expect(result.next_action).toBeDefined();
       expect(VALID_MCP_TOOL_NAMES.has(result.next_action!.tool)).toBe(true);
-      expect(result.next_action!.tool).toBe('aza_loop_next');
+      expect(result.next_action!.tool).toBe('aza_loop');
       expect(result.next_action!.action).toBe('escalate');
     });
   });
@@ -212,7 +192,7 @@ describe('LoopController tool name validation', () => {
       expect(result.success).toBe(false);
       expect(result.next_action).toBeDefined();
       expect(VALID_MCP_TOOL_NAMES.has(result.next_action!.tool)).toBe(true);
-      expect(result.next_action!.tool).toBe('aza_loop_next');
+      expect(result.next_action!.tool).toBe('aza_loop');
       expect(result.next_action!.action).toBe('stop');
     });
   });

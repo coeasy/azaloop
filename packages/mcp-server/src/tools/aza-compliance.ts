@@ -98,7 +98,7 @@ export async function handleCompliance(
         domestic_alternatives: getDomesticLLMAlternatives(),
       },
       next_action: result.passed
-        ? { tool: 'aza_loop_next', action: 'next', reason: `Compliance ${result.level} — safe to proceed` }
+        ? { tool: 'aza_loop', action: 'next', reason: `Compliance ${result.level} — safe to proceed` }
         : { tool: 'aza_compliance', action: 'fix', reason: `Compliance ${result.level} (score ${result.score}) — ${result.violations.length} violation(s) found` },
       metadata: { iteration: 0, progress: result.passed ? '90%' : '50%', stage: 'verify' },
     };

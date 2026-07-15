@@ -178,6 +178,11 @@ export function keyToFilePath(key: string, azaDir: string): string {
   if (!/^[a-z][a-z0-9-]*$/.test(namespace)) {
     throw new Error(`Invalid key "${key}": namespace "${namespace}" must be kebab-case`);
   }
+  if (!namespace.startsWith('aza-') && !namespace.startsWith('claude-')) {
+    throw new Error(
+      `Invalid key "${key}": namespace "${namespace}" must start with "aza-" or "claude-"`,
+    );
+  }
   const safeRemainder = remainder.replace(/[^a-zA-Z0-9._-]/g, '_');
   const tail = namespace.startsWith('aza-') ? namespace.slice(4) : namespace;
   const isReserved = RESERVED_NAMESPACES.includes(tail);

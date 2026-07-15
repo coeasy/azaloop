@@ -70,6 +70,11 @@ export interface PhaseGateInput {
   diagrams_complete?: number;
   /** Whether the design review has passed. */
   design_review_passed?: boolean;
+  /**
+   * OpenSpec change has proposal+design+tasks (0.3.x competitive synthesis).
+   * When true, diagrams_complete gate may pass without 7 diagram files.
+   */
+  openspec_design_ready?: boolean;
 
   // ── build stage metrics ──
   /** Whether TDD discipline is enforced (tests written before code). */
@@ -151,21 +156,25 @@ const openGate: PhaseGate = {
 /**
  * Quality gate for the **design** stage (architecture).
  *
- * Requirement: 7 architecture diagrams complete + design review passed.
+ * Requirement: (7 diagrams OR OpenSpec design ready) + design review passed.
  */
 const designGate: PhaseGate = {
   stage: 'design',
-  name: 'Architecture Gate — 7 diagrams complete + design review passed',
+  name: 'Architecture Gate — diagrams or OpenSpec design + review passed',
   checks: [
     {
       id: 'diagrams_complete',
-      label: '7 architecture diagrams complete',
+      label: '7 architecture diagrams OR OpenSpec design ready',
       check: (input) => {
         const diagrams = input.diagrams_complete ?? 0;
+        const openspec = input.openspec_design_ready === true;
+        const passed = diagrams >= 7 || openspec;
         return {
-          passed: diagrams >= 7,
-          detail: `${diagrams}/7 architecture diagrams complete`,
-          metrics: { diagrams_complete: diagrams, required: 7 },
+          passed,
+          detail: openspec
+            ? `OpenSpec design ready (diagrams ${diagrams}/7 optional)`
+            : `${diagrams}/7 architecture diagrams complete`,
+          metrics: { diagrams_complete: diagrams, required: 7, openspec_design_ready: openspec ? 1 : 0 },
         };
       },
     },

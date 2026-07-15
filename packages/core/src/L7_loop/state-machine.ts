@@ -177,7 +177,13 @@ export class StateMachine {
 
   getProgress(): string {
     const completed = STAGE_ORDER.filter(s => this.state.stages[s].status === 'completed').length;
-    const pct = Math.round((completed / STAGE_ORDER.length) * 100);
+    const blocked = STAGE_ORDER.some(s => this.state.stages[s].status === 'blocked');
+    let pct = Math.round((completed / STAGE_ORDER.length) * 100);
+    // Never claim 100% while a stage is blocked or archive is incomplete
+    if (blocked || (pct === 100 && this.state.stages.archive.status !== 'completed')) {
+      pct = Math.min(pct, 99);
+    }
+    if (blocked && pct === 0) pct = Math.max(pct, 1);
     return `${pct}%`;
   }
 

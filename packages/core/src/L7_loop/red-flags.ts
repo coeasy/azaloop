@@ -105,7 +105,7 @@ export const RED_FLAGS: RedFlag[] = [
   // ── RF-8: stage advance without gate check ──
   {
     id: 'RF-8',
-    tool: 'aza_loop_next',
+    tool: 'aza_loop',
     requiresPriorCall: ['aza_quality_check'],
     severity: 'block',
     remediation: 'Cannot advance past verify/archive without aza_quality_check passing.',

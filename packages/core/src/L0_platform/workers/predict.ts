@@ -1,6 +1,8 @@
 /**
  * predict worker (T28)
  *
+ * @status integrated — registered in WorkerScheduler (every-270s).
+ *
  * Predicts risk for the next stage by inspecting strike count and
  * iteration depth. If strikes ≥ 2 OR iteration ≥ 80% of max, warn.
  */

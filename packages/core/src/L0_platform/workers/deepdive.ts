@@ -1,6 +1,8 @@
 /**
  * deepdive worker (T28)
  *
+ * @status integrated — triggered on-strike via WorkerScheduler + LoopController.notifyStrike.
+ *
  * Triggered on strike. Records which strike reason triggered the dive
  * and surfaces a structured reminder for the loop to back off and
  * re-analyze before retrying.

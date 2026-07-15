@@ -11,8 +11,8 @@
  *   4. 阶段跟踪从 StateMachine 同步，而非依赖 response.data.stage
  *
  * 工作模式:
- *   1. 当 `next_action.tool === 'aza_loop_next'` 时，自动继续下一轮
- *   2. 当 `next_action.tool !== 'aza_loop_next'` 时，暂停并等待 LLM 执行工具
+ *   1. 当 `next_action` 是 `aza_loop` 驱动动作（next/full/step/auto）时自动继续下一轮
+ *   2. 当需要宿主工具时暂停并等待 LLM 执行
  *   3. LLM 执行工具后，调用 `reportToolExecuted()` 通知调度器继续
  *
  * 使用方式:
@@ -45,6 +45,15 @@ export interface SchedulerCallbacks {
   onComplete?: (result: { stage: string; iteration: number }) => void;
   onError?: (error: Error) => void;
   onStateSync?: () => Promise<void>;
+}
+
+function isAutoContinueAction(action: NextAction | null | undefined): boolean {
+  if (!action?.tool) return false;
+  if (action.tool === 'aza_loop_next') return true;
+  if (action.tool === 'aza_loop') {
+    return ['next', 'full', 'step', 'auto'].includes(String(action.action || ''));
+  }
+  return false;
 }
 
 export type SchedulerState = 'idle' | 'running' | 'paused' | 'awaiting_agent' | 'completed' | 'error';
@@ -296,11 +305,10 @@ export class AutoLoopScheduler {
         return;
       }
 
-      // V18: Prioritize explicit awaitingAction signal from buildResponse.
-      // Falls back to heuristic (action.tool !== 'aza_loop_next') for backward compat.
+      // V18: Prioritize explicit awaitingAction; else auto-continue on aza_loop driver actions.
       const explicitAwaiting = response.data?.awaitingAction ?? null;
 
-      if (explicitAwaiting || action.tool !== 'aza_loop_next') {
+      if (explicitAwaiting || !isAutoContinueAction(action)) {
         // V18: Use local variable to avoid null-assignment type error
         const awaiting = explicitAwaiting ?? action;
         this.awaitingAction = awaiting;
@@ -316,7 +324,7 @@ export class AutoLoopScheduler {
         return;
       }
 
-      // Auto-continue for aza_loop_next actions
+      // Auto-continue for aza_loop driver actions
       this.callbacks.onStageChange?.(this.currentStage);
 
       // V18: next() already calls syncStateToFile(), so we only call onStateSync callback

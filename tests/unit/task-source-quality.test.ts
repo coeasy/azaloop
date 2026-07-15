@@ -32,9 +32,9 @@ describe('Task Source Quality Scoring (v14-P7.5)', () => {
 
   it('3) missing title penalty: 1 missing field → 95 score', () => {
     const items = [
-      makeItem({ title: 'A' }),
-      makeItem({ title: '' as any }),
-      makeItem({ title: 'B' }),
+      makeItem({ title: 'A', line: 1 }),
+      makeItem({ title: '' as any, line: 2 }),
+      makeItem({ title: 'B', line: 3 }),
     ];
     const score = scoreTaskSource(items);
     expect(score.missingFields).toBe(1);

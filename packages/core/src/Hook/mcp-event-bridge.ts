@@ -5,6 +5,8 @@ import { isWriteAllowed, analyzeBlastRadius } from '../L7_loop/write-guards';
 import { WRITE_TOOLS } from '../L7_loop/stage-tool-guard';
 import { withRecursionGuard, RecursionGuardError } from '../L7_loop/recursion-guard';
 import type { Stage } from '../L7_loop/state-machine';
+import { checkPreSkill } from './pre-skill-invocation';
+import type { SkillMeta } from '../L5_skill/registry';
 
 /**
  * A tool executor is any async function that takes a record of arguments
@@ -136,6 +138,38 @@ export class MCPEventBridge {
   ): Promise<BridgedResult<T>> {
     // 1. Pre-tool simulation (discipline check — may throw on hard stop).
     await this.simulator.simulatePreTool(toolName, args);
+
+    // 1a. Pre-skill guard — when caller passes skill_id / skill meta
+    const skillId = (args.skill_id as string) || (args.skill as string);
+    const whenToUse = args.when_to_use as string | undefined;
+    if (skillId && whenToUse) {
+      const meta = {
+        name: skillId,
+        when_to_use: whenToUse,
+      } as SkillMeta;
+      const stage = this.options.stageResolver
+        ? await this.options.stageResolver()
+        : undefined;
+      const guard = checkPreSkill(meta, {
+        stage,
+        intent: (args.intent as string) || (args.description as string),
+        tags: (args.tags as string[]) || [],
+        filePath: args.file_path as string | undefined,
+        explicit: args.explicit_skill === true,
+      });
+      if (!guard.allowed) {
+        return {
+          success: false,
+          error: guard.reason || 'pre-skill guard blocked invocation',
+          data: { pre_skill: guard },
+          next_action: {
+            tool: 'aza_meta',
+            action: 'skills_list',
+            reason: 'Skill context mismatch — pick a matching skill or set explicit_skill=true',
+          },
+        } as unknown as BridgedResult<T>;
+      }
+    }
 
     // 1b. CP-new-2: Phase write-guard — for write tools, verify the target
     //     file is allowed in the current stage, and compute blast radius.

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
+import { normalizeCliPath } from './util/path';
 import { initCommand } from './commands/init';
 import { setupCommand } from './commands/setup';
 import { continueCommand } from './commands/continue';
@@ -7,6 +8,7 @@ import { upgradeCommand } from './commands/upgrade';
 import { loopCommand } from './commands/loop';
 import { budgetCommand } from './commands/budget';
 import { auditCommand } from './commands/audit';
+import { packCommand } from './commands/pack';
 
 const program = new Command();
 
@@ -22,7 +24,7 @@ program
   .option('--root <path>', 'Project root directory')
   .option('-y, --yes', 'Skip prompts (non-interactive)')
   .action(async (options) => {
-    await initCommand(options);
+    await initCommand({ ...options, root: normalizeCliPath(options.root) });
   });
 
 program
@@ -35,7 +37,7 @@ program
   .option('--tier <tier>', 'When used with --all, restrict to T1 | T2 | T3')
   .option('--skip-validation', 'Skip keyword validation after generation')
   .action(async (options) => {
-    await setupCommand(options);
+    await setupCommand({ ...options, root: normalizeCliPath(options.root) });
   });
 
 program
@@ -51,7 +53,7 @@ program
     const maxIterations = options.maxIterations ? parseInt(options.maxIterations, 10) : 50;
     await loopCommand({
       stage: options.stage,
-      dir: options.dir,
+      dir: normalizeCliPath(options.dir),
       maxIterations: Number.isFinite(maxIterations) ? maxIterations : 50,
       dryRun: !!options.dryRun,
       task: options.task,
@@ -64,16 +66,19 @@ program
   .description('Continue from last session (for T3 clients without auto-resume)')
   .option('--dir <path>', 'Project directory')
   .action(async (options) => {
-    await continueCommand(options.dir);
+    await continueCommand(normalizeCliPath(options.dir));
   });
 
 program
   .command('status')
   .description('Show current project status')
-  .action(async () => {
+  .option('--dir <path>', 'Project .aza directory')
+  .action(async (options) => {
     const { StateManager } = await import('@azaloop/core');
     const path = require('path');
-    const azaDir = path.join(process.cwd(), '.aza');
+    const azaDir = normalizeCliPath(options.dir)
+      ? path.resolve(normalizeCliPath(options.dir)!)
+      : path.join(process.cwd(), '.aza');
     try {
       const stateManager = new StateManager(azaDir);
       await stateManager.load();
@@ -103,12 +108,21 @@ program
   });
 
 program
+  .command('pack')
+  .description('One-click portable build (CLI + MCP) and optional local install')
+  .option('--root <path>', 'Monorepo root directory')
+  .option('--install', 'Run install.ps1 / install.sh after build')
+  .action(async (options) => {
+    await packCommand({ root: normalizeCliPath(options.root), install: !!options.install });
+  });
+
+program
   .command('upgrade')
   .description('Upgrade from v8/v9 to v12.2')
   .option('--from <version>', 'Source version (v8 or v9)')
   .option('--root <path>', 'Project root directory')
   .action(async (options) => {
-    await upgradeCommand(options);
+    await upgradeCommand({ ...options, root: normalizeCliPath(options.root) });
   });
 
 program
@@ -116,7 +130,7 @@ program
   .description('Show token budget report (estimates consumption per loop level/stage)')
   .option('--dir <path>', 'Project .aza directory')
   .action(async (options) => {
-    await budgetCommand(options.dir);
+    await budgetCommand(normalizeCliPath(options.dir));
   });
 
 program
@@ -124,7 +138,7 @@ program
   .description('Run loop-audit scoring (18 signals, 4 levels L0-L3, 0-100 score)')
   .option('--dir <path>', 'Project .aza directory')
   .action(async (options) => {
-    await auditCommand(options.dir);
+    await auditCommand(normalizeCliPath(options.dir));
   });
 
 program.parse(process.argv);

@@ -20,41 +20,27 @@ import {
  * next_action.tool returned by the loop is a real, callable tool.
  */
 const VALID_MCP_TOOL_NAMES: Set<string> = new Set([
+  // Unified 8-tool surface (0.2.x)
+  'aza_session',
+  'aza_prd',
+  'aza_loop',
+  'aza_spec',
+  'aza_quality',
+  'aza_finish',
+  'aza_memory',
+  'aza_meta',
+  // Legacy aliases still emitted by core in some paths (MCP remaps)
   'aza_prd_generate',
   'aza_prd_validate',
   'aza_prd_review',
   'aza_prd_approve',
-  'aza_prd_modify',
-  'aza_prd_cancel',
   'aza_loop_next',
-  'aza_loop_status',
-  'aza_loop_complete',
-  'aza_loop_stop',
-  'aza_loop_set_condition',
-  'aza_loop_reset_conditions',
-  'aza_loop_stage_iterations',
   'aza_task_design',
   'aza_task_implement',
   'aza_task_verify',
   'aza_quality_check',
-  'aza_memory_query',
-  'aza_memory_record',
-  'aza_context_calibrate',
-  'aza_context_status',
-  'aza_continue',
-  'aza_health',
   'aza_doc_generate',
-  'aza_skill_search',
-  'aza_skill_list',
-  'aza_security_scan',
-  'aza_style_check',
-  'aza_style_learn',
-  'aza_audit',
-  'aza_compliance',
-  'aza_dag',
-  'aza_loop_circuit_breaker',
-  'aza_loop_completion_gate',
-  'aza_loop_audit',
+  'aza_context_calibrate',
 ]);
 
 /**
@@ -131,7 +117,7 @@ describe('AzaLoop V12.2 Auto-Loop E2E', () => {
 
   // ── Scenario 2: 用户确认 PRD ──────────────────────────────────────
 
-  it('2. 用户确认 PRD: approve() 返回 aza_loop_next 入口', async () => {
+  it('2. 用户确认 PRD: approve() 返回 aza_loop(full) 入口', async () => {
     await gate.review({
       title: '用户确认 PRD 测试项目',
       description: '一个用于验证 approve 流程的测试项目',
@@ -140,8 +126,8 @@ describe('AzaLoop V12.2 Auto-Loop E2E', () => {
     const result = await gate.approve();
 
     expect(result.approved).toBe(true);
-    expect(result.next_action.tool).toBe('aza_loop_next');
-    expect(result.next_action.action).toBe('next');
+    expect(result.next_action.tool).toBe('aza_loop');
+    expect(result.next_action.action).toBe('full');
   });
 
   // ── Scenario 3: 三级循环推进 ──────────────────────────────────────

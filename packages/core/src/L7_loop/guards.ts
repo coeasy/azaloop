@@ -35,7 +35,7 @@ export class StageGuards {
 
     const allIssues: string[] = [];
     let refineAction = 'refine';
-    let refineTool = 'aza_task_implement';
+    let refineTool = 'aza_spec';
 
     for (const guard of stageGuards) {
       const result = guard.check();
@@ -89,20 +89,20 @@ export class StageGuards {
       design: 'design',
       build: 'implement',
       verify: 'check',
-      archive: 'generate',
+      archive: 'ship',
     };
     return map[stage] || 'refine';
   }
 
   private inferRefineTool(stage: Stage): string {
     const map: Record<Stage, string> = {
-      open: 'aza_prd_generate',
-      design: 'aza_task_design',
-      build: 'aza_task_implement',
-      verify: 'aza_quality_check',
-      archive: 'aza_doc_generate',
+      open: 'aza_prd',
+      design: 'aza_spec',
+      build: 'aza_spec',
+      verify: 'aza_quality',
+      archive: 'aza_finish',
     };
-    return map[stage] || 'aza_loop_next';
+    return map[stage] || 'aza_loop';
   }
 }
 
@@ -159,7 +159,7 @@ export function createDefaultGuards(
         allowed: passed,
         blocking_issues: passed ? [] : ['PRD not yet validated or quality score < 80%'],
         refine_action: 'refine',
-        refine_tool: 'aza_prd_generate',
+        refine_tool: 'aza_prd',
       };
     },
   });
@@ -172,7 +172,7 @@ export function createDefaultGuards(
         allowed: passed,
         blocking_issues: passed ? [] : ['Stories not fully designed'],
         refine_action: 'design',
-        refine_tool: 'aza_task_design',
+        refine_tool: 'aza_spec',
       };
     },
   });
@@ -185,7 +185,7 @@ export function createDefaultGuards(
         allowed: passed,
         blocking_issues: passed ? [] : ['Implementation incomplete or tests failing'],
         refine_action: 'implement',
-        refine_tool: 'aza_task_implement',
+        refine_tool: 'aza_spec',
       };
     },
   });
@@ -198,7 +198,7 @@ export function createDefaultGuards(
         allowed: passed,
         blocking_issues: passed ? [] : ['Quality gates not all passing'],
         refine_action: 'check',
-        refine_tool: 'aza_quality_check',
+        refine_tool: 'aza_quality',
       };
     },
   });
@@ -210,8 +210,8 @@ export function createDefaultGuards(
       return {
         allowed: passed,
         blocking_issues: passed ? [] : ['Archive prerequisites not met'],
-        refine_action: 'generate',
-        refine_tool: 'aza_doc_generate',
+        refine_action: 'ship',
+        refine_tool: 'aza_finish',
       };
     },
   });

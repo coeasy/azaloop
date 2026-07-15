@@ -92,7 +92,7 @@ function reviewCodeQuality(input: ReviewInput): ReviewResult {
   // Heuristic 1: avoid `console.log` in production code
   if (/console\.log\(/.test(input.content)) {
     findings.push('Avoid console.log in production code');
-    score -= 0.2;
+    score -= 0.5;
   }
   // Heuristic 2: avoid `any` in TypeScript
   if (/:\s*any\b/.test(input.content)) {

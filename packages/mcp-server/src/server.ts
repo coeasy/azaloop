@@ -115,9 +115,9 @@ async function handleRequest(req: JSONRPCRequest): Promise<JSONRPCResponse> {
           error: err.message,
           data: null,
           next_action: {
-            tool: 'aza_loop_next',
+            tool: 'aza_loop',
             action: 'refine',
-            reason: `Write blocked in stage "${err.stage}". Use aza_loop_next to advance to a stage where this write is allowed.`,
+            reason: `Write blocked in stage "${err.stage}". Use aza_loop(action=next) to advance to a stage where this write is allowed.`,
           },
           blocked_file: err.filePath,
           blocked_stage: err.stage,

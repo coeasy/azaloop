@@ -104,21 +104,25 @@ for f in LICENSE README.md README.en.md WELCOME.md; do
   fi
 done
 
-# Step 3: Add to PATH
+# Step 3: Add to PATH (shell config + current session)
 if [ "$PORTABLE" = false ]; then
   echo ""
   echo "  [3/4] Adding to PATH..."
   SHELL_CONFIG="$HOME/.bashrc"
-  if [ -n "$ZSH_VERSION" ]; then
+  if [ -n "${ZSH_VERSION:-}" ]; then
     SHELL_CONFIG="$HOME/.zshrc"
   fi
   if grep -qFq "$TARGET_DIR" "$SHELL_CONFIG" 2>/dev/null; then
-    echo "    ✓ Already in PATH"
+    echo "    ✓ Already in shell config PATH"
   else
     echo "export PATH=\"\$PATH:$TARGET_DIR\"" >> "$SHELL_CONFIG"
     echo "    ✓ Added to $SHELL_CONFIG"
-    echo "    Run: source $SHELL_CONFIG"
   fi
+  # Make `aza` available in THIS shell without re-login
+  case ":$PATH:" in
+    *":$TARGET_DIR:"*) echo "    ✓ Current session PATH already has install dir" ;;
+    *) export PATH="$TARGET_DIR:$PATH"; echo "    ✓ Current session PATH updated (aza available now)" ;;
+  esac
 fi
 
 # Step 4: Initialize project

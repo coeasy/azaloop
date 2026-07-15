@@ -38,6 +38,11 @@ export const QualityConfigSchema = z.object({
   }),
 });
 
+/** ralphy-style project rules + boundaries (0.3.x). */
+export const BoundariesConfigSchema = z.object({
+  never_touch: z.array(z.string()).default([]),
+});
+
 export const AzaloopConfigSchema = z.object({
   version: z.string().default('4.0'),
   project: z.object({
@@ -50,6 +55,10 @@ export const AzaloopConfigSchema = z.object({
   quality: QualityConfigSchema.default({
     gates: { lint: true, test: true, regression: true, security: true, acceptance: true },
   }),
+  /** Persistent agent rules applied to every task. */
+  rules: z.array(z.string()).default([]),
+  /** Paths/globs the agent must never modify. */
+  boundaries: BoundariesConfigSchema.default({ never_touch: [] }),
   mcp_servers: z.array(z.object({
     name: z.string(),
     config: MCPServerConfigSchema,

@@ -70,7 +70,7 @@ export const CLIENT_RULES_CONFIG: ClientRulesConfig[] = [
   { name: 'windsurf',       description: 'Windsurf Editor',                tier: 'T3', rulesPath: 'windsurf/rules/azaloop.md',  includePhaseGuard: true,  needsCliWrapper: false, displayName: 'Windsurf' },
 ];
 
-const REQUIRED_KEYWORDS = ['PRD 先行', '自动循环', 'phase-guard'] as const;
+const REQUIRED_KEYWORDS = ['PRD 先行', '自动循环', 'aza_session', 'aza_loop'] as const;
 
 // ── Result types ──
 
@@ -161,10 +161,17 @@ export async function generateClientRules(
   }
 
   const sharedDir = options.sharedDir ?? findSharedDir();
-  const v12Path = path.join(sharedDir, 'v12.2-rules.md');
+  // Prefer V17 8-tool protocol; fall back to v16 shared auto-loop body
+  const v17Path = path.join(sharedDir, 'v17-rules.md');
+  const v16Path = path.join(sharedDir, '..', 'clients', '_shared', 'v16-auto-loop.md');
   const phaseGuardPath = path.join(sharedDir, 'phase-guard.md');
 
-  const v12Template = await fs.readFile(v12Path, 'utf8');
+  let template: string;
+  try {
+    template = await fs.readFile(v17Path, 'utf8');
+  } catch {
+    template = await fs.readFile(v16Path, 'utf8');
+  }
   const phaseGuard = cfg.includePhaseGuard ? await fs.readFile(phaseGuardPath, 'utf8') : '';
 
   const ctx: TemplateContext = {
@@ -173,7 +180,7 @@ export async function generateClientRules(
     CLIENT_TIER: cfg.tier,
   };
 
-  const rendered = renderTemplate(v12Template, ctx);
+  const rendered = renderTemplate(template, ctx);
   const finalContent = cfg.includePhaseGuard
     ? `${rendered}\n\n${renderTemplate(phaseGuard, ctx)}\n`
     : `${rendered}\n`;
@@ -269,8 +276,18 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 }
 
-// Run when invoked directly.
-if (require.main === module) {
+// Run when invoked directly as the generator binary.
+// NOTE: inside a Node SEA bundle, `require.main === module` is ALWAYS true
+// (the whole bundle is one module), so we additionally require argv[1] to
+// actually name this generator — otherwise importing it from the CLI (which
+// happens transitively via setupCommand) would hijack argv and crash every
+// `aza <subcommand>` invocation.
+const _genArgv1 = process.argv[1] || '';
+const isGeneratorEntry =
+  _genArgv1.includes('client-rules-generator') ||
+  _genArgv1.endsWith('client-rules-generator.js') ||
+  _genArgv1.endsWith('client-rules-generator.cjs');
+if (require.main === module && isGeneratorEntry) {
   runCli(process.argv).then(
     (code) => process.exit(code),
     (err) => {

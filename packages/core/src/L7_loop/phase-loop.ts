@@ -66,6 +66,8 @@ export interface PhaseResult {
   escalated: boolean;
   /** Escalation reason, if escalated. */
   escalation_reason?: string;
+  /** V16: Host must execute this tool before the phase can continue. */
+  awaitingAction?: NextAction;
 }
 
 /**
@@ -90,8 +92,15 @@ export interface MakerResult {
   tokensUsed: number;
   /** V16: Signal to pause phase loop — LLM must execute the specified tool. */
   status?: 'awaiting_agent';
-  /** V16: The tool the LLM should call next (e.g. "aza_task_implement"). */
+  /**
+   * V16 legacy: tool name OR sub-action. Prefer `tool` + `host_action`.
+   * When `tool` is set, this is treated as the MCP `action` param.
+   */
   action?: string;
+  /** Unified MCP tool name (e.g. aza_spec). Falls back to `action`. */
+  tool?: string;
+  /** MCP action param when using unified tools (e.g. design / implement). */
+  host_action?: string;
   /** V16: The stage context for the awaited action. */
   stage?: Stage;
 }
@@ -241,7 +250,19 @@ export class PhaseLoop {
     const work = makerResult.work;
 
     // V16: await_agent signal — maker needs LLM to execute a tool before continuing
-    if (makerResult.status === 'awaiting_agent' && makerResult.action) {
+    if (makerResult.status === 'awaiting_agent' && (makerResult.action || makerResult.tool)) {
+      const toolName = makerResult.tool || makerResult.action!;
+      const toolAction =
+        makerResult.host_action ||
+        (stage === 'design'
+          ? 'design'
+          : stage === 'build'
+            ? 'implement'
+            : stage === 'verify'
+              ? 'check'
+              : stage === 'archive'
+                ? 'archive'
+                : 'implement');
       this.recordIteration({
         iteration,
         role: 'maker',
@@ -249,7 +270,7 @@ export class PhaseLoop {
         completed_at: new Date().toISOString(),
         tokens_used: makerResult.tokensUsed,
         gate_passed: false,
-        suggestion: `Awaiting agent to execute ${makerResult.action} for stage "${makerResult.stage || stage}"`,
+        suggestion: `Awaiting agent to execute ${toolName}(${toolAction}) for stage "${makerResult.stage || stage}"`,
       });
       return {
         done: false,
@@ -258,11 +279,11 @@ export class PhaseLoop {
         success: false,
         escalated: false,
         awaitingAction: {
-          tool: makerResult.action as any,
-          action: 'implement',
-          reason: `Maker waiting for LLM to execute ${makerResult.action} for stage "${makerResult.stage || stage}"`,
+          tool: toolName as any,
+          action: toolAction,
+          reason: `Maker waiting for LLM to execute ${toolName}(${toolAction}) for stage "${makerResult.stage || stage}"`,
         },
-        suggestions: [`Awaiting ${makerResult.action} execution`],
+        suggestions: [`Awaiting ${toolName} execution`],
       };
     }
 
@@ -539,6 +560,7 @@ export class PhaseLoop {
           suggestions: [...suggestions, ...oneResult.suggestions],
           history: this.history,
           escalated: false,
+          awaitingAction: oneResult.awaitingAction,
           escalation_reason: `Awaiting agent action: ${oneResult.awaitingAction.tool}`,
         };
       }

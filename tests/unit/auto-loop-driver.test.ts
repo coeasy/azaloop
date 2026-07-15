@@ -118,7 +118,7 @@ describe('AutoLoopDriver V18', () => {
           expect(result.awaitingAction).toHaveProperty('action');
           expect(result.awaitingAction).toHaveProperty('reason');
           // The tool should be one of the stage tools
-          expect(['aza_task_implement', 'aza_quality_check', 'aza_doc_generate']).toContain(
+          expect(['aza_spec', 'aza_quality', 'aza_finish', 'aza_task_implement', 'aza_quality_check', 'aza_doc_generate']).toContain(
             result.awaitingAction.tool,
           );
           return;

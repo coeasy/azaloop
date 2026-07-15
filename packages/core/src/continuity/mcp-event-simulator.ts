@@ -7,6 +7,7 @@ import { RunLedger } from '../state/run-ledger';
 import { WorkspaceJournal } from '../L2_memory/workspace-journal';
 import { scanSecrets } from '../L6_security/scanners/secret';
 import { evaluate, loadPolicyFromFile, type SecurityPolicy } from '../L6_security/policy-as-code';
+import { runShellwardGuard } from '../L6_security/shellward-guard';
 import * as path from 'path';
 import type { NextAction } from '@azaloop/shared';
 
@@ -83,14 +84,14 @@ export interface EventSimulationResult {
 }
 
 /**
- * Maps each pipeline stage to the MCP tool that should be called next.
+ * Maps each pipeline stage to the unified 8-tool next step (0.2.x).
  */
-const STAGE_TOOL_MAP: Record<string, string> = {
-  open: 'aza_prd_generate',
-  design: 'aza_task_design',
-  build: 'aza_task_implement',
-  verify: 'aza_quality_check',
-  archive: 'aza_doc_generate',
+const STAGE_NEXT_MAP: Record<string, { tool: string; action: string }> = {
+  open: { tool: 'aza_prd', action: 'review' },
+  design: { tool: 'aza_spec', action: 'design' },
+  build: { tool: 'aza_spec', action: 'implement' },
+  verify: { tool: 'aza_quality', action: 'check' },
+  archive: { tool: 'aza_finish', action: 'ship' },
 };
 
 /**
@@ -188,14 +189,25 @@ export class MCPEventSimulator {
   ): Promise<EventSimulationResult> {
     const events: HookEvent[] = ['pre-tool'];
 
-    // ── L1-L3 Security defense: input audit + tool interception ──
-    // Scan args for potential secrets before tool execution
+    // ── shellward 8-layer DLP on tool args ──
     const argsStr = JSON.stringify(args);
+    const dlp = runShellwardGuard(argsStr, `tool-args:${toolName}`, { blockOnFail: true });
+    if (dlp.blocked) {
+      console.error(
+        `[MCPEventSimulator:pre-tool] shellward DLP blocked: ${dlp.reason}`,
+      );
+      await this.eventBus.emit('on-error', {
+        tool: toolName,
+        error: `shellward DLP blocked: ${dlp.reason}`,
+      });
+      throw new Error(`Security policy blocked tool '${toolName}': ${dlp.reason}`);
+    }
+
+    // Legacy secret-only pass kept for policy-file nuance (warn-only if already covered)
     const secretFindings = scanSecrets(argsStr, `tool-args:${toolName}`);
     if (secretFindings.length > 0) {
       const policyResult = evaluate(secretFindings, this.policy);
       if (!policyResult.passed) {
-        // Policy blocks this tool call — emit security event and throw
         console.error(
           `[MCPEventSimulator:pre-tool] Security policy blocked: ${policyResult.reason}`,
         );
@@ -387,11 +399,18 @@ export class MCPEventSimulator {
   private getNextAction(): NextAction {
     const state = this.stateManager.getState();
     const stage = state.pipeline.current_stage;
-    const tool = STAGE_TOOL_MAP[stage] ?? 'aza_loop_next';
-
+    // Once a story is active, always drive full-auto rather than re-open PRD generate
+    if (state.loop.current_story && (stage === 'open' || stage === 'design' || stage === 'build')) {
+      return {
+        tool: 'aza_loop',
+        action: 'full',
+        reason: `Story ${state.loop.current_story} active at "${stage}" — continue full loop`,
+      };
+    }
+    const mapped = STAGE_NEXT_MAP[stage] ?? { tool: 'aza_loop', action: 'full' };
     return {
-      tool,
-      action: `continue_${stage}`,
+      tool: mapped.tool,
+      action: mapped.action,
       reason: `Stage "${stage}" in progress, iteration ${state.loop.iteration}, progress ${state.loop.progress}`,
     };
   }

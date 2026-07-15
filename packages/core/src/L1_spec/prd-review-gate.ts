@@ -2,9 +2,15 @@ import { PRDGenerator, type PRDGenerationInput, type Complexity } from './prd-ge
 import { PRDChecker, type PRDCheckResult } from './prd-checker';
 import type { StateManager } from '../state/state-manager';
 import type { ResumeGenerator } from '../continuity/resume-generator';
-import type { NextAction } from '@azaloop/shared';
+import type { NextAction, PRD } from '@azaloop/shared';
 import { BRAINSTORMING_RED_FLAGS, topBrainstormingRedFlags, type RedFlag } from './brainstorming-red-flags';
 import type { SkillMeta } from '../L5_skill/registry';
+import {
+  runCompetitiveResearch,
+  writePrdMarkdown,
+} from './github-competitive-research';
+import * as path from 'path';
+import * as fs from 'fs';
 
 export interface PRDReviewResult {
   prd_id: string;
@@ -23,8 +29,20 @@ export interface PRDReviewResult {
   red_flags?: RedFlag[];
   /** T25 — explicit HARD-GATE flag (true when requires_approval triggers). */
   hard_gate?: boolean;
-  /** T25 — input source: 'openspec' (T23) or 'aza-prd' (default). */
+  /** T25 — input source: 'openspec' (default since 0.2.x) or 'aza-prd'. */
   source?: 'openspec' | 'aza-prd';
+  /** Workspace root used for OpenSpec + .aza writes (must be the project, not HOME). */
+  workspace_path?: string;
+  /** CEO/QA/Eng multi-role review (P3-2) */
+  multi_role?: import('./prd-multi-role-review').MultiRoleReviewResult;
+  /** Competitive research summary surfaced to the host (default + visible). */
+  competitive?: {
+    source: string;
+    count: number;
+    top: string[];
+    cached: boolean;
+    skipped: boolean;
+  };
 }
 
 export interface ApprovalResult {
@@ -66,6 +84,9 @@ export class PRDReviewGate {
   private resumeGenerator: ResumeGenerator;
   private timeoutMs: number;
   private pendingReview: PRDReviewResult | null = null;
+  // V20 Task 1.4: multi-step LLM interaction state
+  private pendingDraftInput: PRDGenerationInput | null = null;
+  private pendingDraftPrd: PRD | null = null;
 
   constructor(options: {
     stateManager: StateManager;
@@ -94,18 +115,134 @@ export class PRDReviewGate {
     input: PRDGenerationInput & {
       skillMeta?: SkillMeta;
       source?: 'openspec' | 'aza-prd';
+      workspace_path?: string;
     },
   ): Promise<PRDReviewResult> {
+    const workRoot =
+      input.workspace_path ||
+      (this.stateManager as any).azaDir?.replace(/[\\/]\.aza$/, '') ||
+      process.cwd();
+    const azaDir = path.join(workRoot, '.aza');
+
+    // 0. Competitive research — DEFAULT + VISIBLE + UN-BYPASSABLE.
+    // Every PRD carries competitor context (runCompetitiveResearch always
+    // returns the curated pool as fallback). Live GitHub search runs for
+    // L2–L4 (L1 uses curated, offline). Results are cached (24h) to shrink
+    // token/request cost. Complexity is graded after generate; we pass a
+    // hint of undefined so 'auto' treats unknown as L2 (live).
+    let research: Awaited<ReturnType<typeof runCompetitiveResearch>>['research'] = null;
+    let competitiveCached = false;
+    let competitiveSkipped = false;
+    try {
+      const comp = await runCompetitiveResearch(azaDir, input.title, input.description || input.title);
+      research = comp.research;
+      competitiveCached = comp.fromCache;
+      competitiveSkipped = comp.skipped;
+      if (research) {
+        const raw = input.description || input.title;
+        const peers = research.competitors.slice(0, 3).map((c) => c.full_name).join(', ') || 'OpenSpec, Superpowers, ralphy';
+        const enrichedDescription = [
+          raw,
+          /pain|痛点|problem|stall/i.test(raw) ? '' : 'Pain: vague PRDs and fragile agent loops waste tokens and stall full-auto delivery.',
+          /compet|OpenSpec|peers|竞品|landscape/i.test(raw) ? '' : `Peers: ${peers}.`,
+        ]
+          .filter(Boolean)
+          .join('\n');
+        input = {
+          ...input,
+          description: enrichedDescription,
+          constraints: [
+            ...(input.constraints || []),
+            ...research.competitors.slice(0, 3).map((c) => `competitor:${c.full_name}`),
+          ],
+        };
+      }
+    } catch {
+      /* research is best-effort; PRD still generates without it */
+    }
+
     // 1. 生成 PRD（带自优化）
-    const prd = this.prdGenerator.generate(input, {
+    let prd = this.prdGenerator.generate(input, {
       enable_self_optimization: true,
       max_optimization_rounds: 5,
       auto_stories: true,
       auto_architecture: true,
+      enable_14chapters: false,
     });
 
-    // 2. 最终检查
+    if (research) {
+      // Keep research detail on disk; ensure gate-required signals on the PRD (≥2 github URLs)
+      const peers = research.competitors.slice(0, 3).map((c) => c.full_name).join(', ');
+      const urls = research.competitors
+        .slice(0, 4)
+        .map((c) => c.html_url)
+        .filter(Boolean);
+      const urlBlock = urls.length
+        ? `\nCompetitive refs:\n${urls.map((u) => `- ${u}`).join('\n')}`
+        : '';
+      if (!/compet|OpenSpec|peers|竞品|landscape|github\.com\//i.test(prd.overview) || urls.length >= 2) {
+        prd = {
+          ...prd,
+          overview: `${prd.overview}\nPeers: ${peers || 'OpenSpec, Superpowers, ralphy'}.${urlBlock}${research.prd_supplements.overview_appendix}`,
+        };
+      }
+      if (prd.goals.length < 2) {
+        prd = {
+          ...prd,
+          goals: [
+            ...prd.goals,
+            ...research.prd_supplements.goals.slice(0, 2),
+          ],
+        };
+      }
+      // Merge differentiator signal into goals if missing
+      if (!prd.goals.some((g) => /differentiat|MCP|Host-LLM|absorb competitive/i.test(g))) {
+        prd = {
+          ...prd,
+          goals: [...prd.goals, ...research.prd_supplements.goals.slice(0, 1)],
+        };
+      }
+      prd = this.prdGenerator.selfOptimize(prd, 3).prd;
+    }
+
+    // Persist human-readable PRD under project .aza/
+    try {
+      writePrdMarkdown(azaDir, prd, research);
+      if (!fs.existsSync(azaDir)) fs.mkdirSync(azaDir, { recursive: true });
+      fs.writeFileSync(path.join(azaDir, 'prd.json'), JSON.stringify(prd, null, 2), 'utf8');
+    } catch {
+      /* best-effort */
+    }
+
+    // 2. 最终检查 + P3-2 multi-role CEO/QA/Eng review
     const checkResult = this.prdChecker.check(prd);
+    let multiRole: import('./prd-multi-role-review').MultiRoleReviewResult | null = null;
+    try {
+      const { runMultiRolePrdReview } = await import('./prd-multi-role-review');
+      multiRole = runMultiRolePrdReview(prd);
+      fs.mkdirSync(azaDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(azaDir, 'prd-multi-role-review.json'),
+        JSON.stringify(multiRole, null, 2),
+        'utf8',
+      );
+    } catch {
+      /* best-effort */
+    }
+
+    // Persist plan.md for crash recovery
+    try {
+      const { writePlanMd, ensureConstitution } = await import('./constitution');
+      ensureConstitution(workRoot);
+      writePlanMd(workRoot, {
+        title: prd.title,
+        stage: 'open',
+        next: 'aza_prd(approve) → aza_loop(full)',
+        bullets: prd.goals.slice(0, 5),
+      });
+    } catch {
+      /* best-effort */
+    }
 
     // 3. 提取展示信息
     const complexity = (prd as any)._complexity || 'L2';
@@ -116,6 +253,9 @@ export class PRDReviewGate {
     const isHardGate = input.skillMeta?.requires_approval === true;
     const displayedFlags = isHardGate ? topBrainstormingRedFlags(3) : undefined;
 
+    // Strict gate: shallow PRDs / open P1 / multi-role P0 must not auto-look healthy
+    const strictBlock = !checkResult.passed || (multiRole ? !multiRole.passed : false);
+
     const result: PRDReviewResult = {
       prd_id: prd.id,
       title: prd.title,
@@ -124,16 +264,31 @@ export class PRDReviewGate {
       key_decisions: this.extractKeyDecisions(prd),
       open_questions: this.extractOpenQuestions(prd, checkResult),
       complexity,
-      quality_score: checkResult.score,
+      quality_score: Math.min(checkResult.score, multiRole?.score ?? 100),
       self_optimize_iterations: 0,
       needs_user_approval: true,
       timeout_ms: this.timeoutMs,
-      instruction: isHardGate
-        ? 'HARD-GATE: Answer the 3 red-flag questions before approval. Pass `answers: { "<flag>": "..." }` to approve().'
-        : this.formatInstruction(),
+      instruction: strictBlock
+        ? `PRD gate FAILED (score ${checkResult.score}/100, P0=${checkResult.p0_count}, P1=${checkResult.p1_count}${multiRole && !multiRole.passed ? `; multi-role: ${multiRole.summary}` : ''}). Fix open_questions before relying on auto_approve.`
+        : isHardGate
+          ? 'HARD-GATE: Answer the 3 red-flag questions before approval. Pass `answers: { "<flag>": "..." }` to approve().'
+          : this.formatInstruction(),
       red_flags: displayedFlags,
       hard_gate: isHardGate || undefined,
-      source: input.source ?? 'aza-prd',
+      source: input.source ?? 'openspec',
+      workspace_path: workRoot,
+      multi_role: multiRole || undefined,
+      competitive: research
+        ? {
+            source: research.source,
+            count: research.competitors.length,
+            top: research.competitors.slice(0, 5).map((c) => c.full_name),
+            cached: competitiveCached,
+            skipped: competitiveSkipped,
+          }
+        : competitiveSkipped
+          ? { source: 'off', count: 0, top: [], cached: false, skipped: true }
+          : undefined,
     };
 
     // T17 / T38: stash the full PRD on the pending review so that
@@ -286,41 +441,75 @@ export class PRDReviewGate {
     // `## Execution Contract` section. This is the hard bridge from
     // T17 (contract) → T23 (openspec).
     let openspecArtifactPath: string | undefined;
-    if (this.pendingReview.source === 'openspec') {
+    // Spine: default to OpenSpec change-folder unless caller explicitly opted out (source === 'aza-prd').
+    const shouldWriteOpenspec = this.pendingReview.source !== 'aza-prd';
+    if (shouldWriteOpenspec) {
       try {
         const { writeChangeFolder } = await import('./change-folder');
         const azaDir = this.stateManager.azaDir ?? '.aza';
-        const projectRoot = azaDir.replace(/\/\.aza$/, '').replace(/\\\.aza$/, '');
+        // Prefer explicit workspace_path from review; never fall back to HOME when
+        // azaDir is an absolute ~/.aza path without a real project parent.
+        const reviewWorkspace =
+          (this.pendingReview as any)?.workspace_path ||
+          (typeof process.env.AZA_WORKSPACE === 'string' && process.env.AZA_WORKSPACE) ||
+          '';
+        const projectRoot = (
+          reviewWorkspace ||
+          azaDir.replace(/[\\/]\.aza$/, '') ||
+          process.cwd()
+        ).replace(/[\\/]$/, '');
         const slug = this.slugifyForOpenSpec(this.pendingReview.title);
         const capability = this.inferCapabilityFromTitle(this.pendingReview.title);
+        const reviewWithPrd2 = this.pendingReview as any;
+        const leanIntent = this.buildLeanOpenSpecIntent(
+          reviewWithPrd2.prd,
+          this.pendingReview.title,
+          intentLock,
+        );
+        const storyTasks =
+          Array.isArray(reviewWithPrd2.prd?.stories) && reviewWithPrd2.prd.stories.length > 0
+            ? reviewWithPrd2.prd.stories.slice(0, 6).map((s: any, i: number) => ({
+                id: `1.${i + 1}`,
+                title: String(s.title || `Story ${i + 1}`).slice(0, 120),
+                verification:
+                  s.acceptance_criteria?.[0]?.description ||
+                  'Acceptance criterion observed as pass/fail',
+                ac: (s.acceptance_criteria || []).map((a: any) => String(a.id)).slice(0, 4),
+              }))
+            : [
+                { id: '1.1', title: `Scaffold: ${this.pendingReview.title}`, verification: 'OpenSpec three-piece set is on disk' },
+                { id: '1.2', title: 'Build: implementation', verification: 'ExecutionContract passes build stage' },
+                { id: '1.3', title: 'Verify: quality gate', verification: 'P0=0 P1=0 and weighted score ≥ 90' },
+              ];
         const result = await writeChangeFolder(
           {
-            intent: this.pendingReview.summary,
+            intent: leanIntent,
             capability,
             slug,
             author: 'azaloop',
+            why: leanIntent,
             whatChanges: [
               `Implement: ${this.pendingReview.title}`,
-              `Add PRD-traceable requirements under capability \`${capability}\``,
-              `Bridge OpenSpec → ExecutionContract (T17) → LoopController`,
+              'Enforce measurable AC per story; clear P0+P1; weighted score ≥ 90',
+              'Keep OpenSpec three-piece lean; contract only in .aza/contract.md',
+            ],
+            nonGoals: [
+              'Do not expand MCP tool count',
+              'Do not embed Execution Contract task batches into proposal.md',
+            ],
+            technicalApproach: [
+              `- OpenSpec three-piece under openspec/changes/${slug}/`,
+              '- Contract pointer only in proposal; full lock in .aza/contract.md',
+              '- Structured tasks.md with verify/ac/deps sub-lines',
             ],
             addedRequirements: [
-              `The system MUST implement the ${this.pendingReview.title} capability.`,
+              `The system MUST clear all P0 and P1 PRD/quality issues with weighted score ≥ 90.`,
+              `Each story MUST have ≥1 measurable acceptance criterion (no placeholder wording).`,
             ],
-            tasks: [
-              { id: '1.1', title: `Scaffold: ${this.pendingReview.title}`, verification: 'OpenSpec four-piece set is on disk' },
-              { id: '1.2', title: 'Build: implementation', verification: 'ExecutionContract passes build stage' },
-              { id: '1.3', title: 'Verify: quality gate', verification: '7 quality gates pass' },
-            ],
-            // v13 — P3.1: bridge contract → openspec proposal
-            contract: intentLock ? {
-              intent_lock: intentLock,
-              task_batches: [
-                { id: '1.1', title: `Scaffold: ${this.pendingReview.title}`, verification: 'OpenSpec four-piece set is on disk' },
-                { id: '1.2', title: 'Build: implementation', verification: 'ExecutionContract passes build stage' },
-                { id: '1.3', title: 'Verify: quality gate', verification: '7 quality gates pass' },
-              ],
-            } : undefined,
+            tasks: storyTasks,
+            // Pointer only — never embed task_batches into proposal
+            contract: intentLock ? { intent_lock: intentLock, path: '.aza/contract.md' } : undefined,
+            writeSidecar: true,
           },
           projectRoot || '.',
         );
@@ -333,6 +522,7 @@ export class PRDReviewGate {
       }
     }
 
+    const pendingTitle = this.pendingReview?.title;
     this.pendingReview = null;
 
     // v13 — P3.1: build the data bridge so callers (MCP tools, LoopController)
@@ -342,13 +532,26 @@ export class PRDReviewGate {
     if (contractPath) data.contract_path = contractPath;
     if (intentLock) data.intent_lock = intentLock;
 
+    try {
+      const { ensureTaskBoard } = await import('../L2_memory/task-board');
+      const azaDir = this.stateManager.azaDir ?? '.aza';
+      ensureTaskBoard(azaDir, {
+        title: pendingTitle,
+        phase: 'open',
+        status: 'in_progress',
+        notes: 'PRD approved — board synced',
+      });
+    } catch {
+      /* best-effort */
+    }
+
     return {
       approved: true,
       stage: 'open',
       message: openspecArtifactPath
         ? `PRD 已确认，OpenSpec 工件已生成于 ${openspecArtifactPath}，开始自动执行`
         : 'PRD 已确认，开始自动执行',
-      next_action: { tool: 'aza_loop_next', action: 'next', reason: 'PRD approved, entering execution' },
+      next_action: { tool: 'aza_loop', action: 'full', reason: 'PRD approved — start full auto loop (follow awaitingAction + report_tool)' },
       data: Object.keys(data).length > 0 ? data : undefined,
     };
   }
@@ -382,7 +585,7 @@ export class PRDReviewGate {
     this.pendingReview = null;
     return {
       cancelled: true,
-      next_action: { tool: 'aza_loop_next', action: 'done', reason: 'PRD review cancelled by user' },
+      next_action: { tool: 'aza_loop', action: 'done', reason: 'PRD review cancelled by user' },
     };
   }
 
@@ -391,6 +594,267 @@ export class PRDReviewGate {
    */
   getPendingReview(): PRDReviewResult | null {
     return this.pendingReview;
+  }
+
+  // ── V20 Task 1.4: 多步 LLM 交互方法 ──
+
+  /**
+   * V20 draft action — generate draft prompt for host LLM.
+   *
+   * Step 1 of multi-step PRD generation:
+   * 1. Run competitive research
+   * 2. Generate draft prompt via prdGenerator.generateDraftPrompt()
+   * 3. Return prompt + next_action pointing to multi_review
+   */
+  async draft(
+    input: PRDGenerationInput & { workspace_path?: string; complexity?: Complexity },
+  ): Promise<{
+    draft_prompt: string;
+    competitive: { source: string; count: number; top: string[] } | null;
+    next_action: NextAction;
+  }> {
+    const workRoot =
+      input.workspace_path ||
+      (this.stateManager as any).azaDir?.replace(/[\\/]\.aza$/, '') ||
+      process.cwd();
+    const azaDir = path.join(workRoot, '.aza');
+
+    // Run competitive research (default + visible)
+    let competitive: Awaited<ReturnType<typeof runCompetitiveResearch>>['research'] = null;
+    try {
+      const comp = await runCompetitiveResearch(azaDir, input.title, input.description || input.title);
+      competitive = comp.research;
+    } catch {
+      /* best-effort */
+    }
+
+    // Stash input for multi_review step
+    this.pendingDraftInput = input;
+
+    // Convert CompetitiveResearchResult → CompetitiveContext for generateDraftPrompt
+    const competitiveContext: import('./prd-llm-prompts').CompetitiveContext | null = competitive
+      ? {
+          competitors: competitive.competitors.slice(0, 8).map((c) => ({
+            full_name: c.full_name,
+            html_url: c.html_url,
+            description: c.description,
+          })),
+          differentiators: competitive.differentiators,
+          goals: competitive.prd_supplements.goals,
+          overview_appendix: competitive.prd_supplements.overview_appendix,
+          risks: competitive.prd_supplements.risks,
+        }
+      : null;
+
+    // Generate draft prompt
+    const complexity = input.complexity || 'L2';
+    const use14Chapters = complexity === 'L3' || complexity === 'L4';
+    const draftPrompt = this.prdGenerator.generateDraftPrompt(input, competitiveContext, {
+      enable_14chapters: use14Chapters,
+      complexity,
+    });
+
+    return {
+      draft_prompt: draftPrompt,
+      competitive: competitive
+        ? {
+            source: competitive.source,
+            count: competitive.competitors.length,
+            top: competitive.competitors.slice(0, 5).map((c) => c.full_name),
+          }
+        : null,
+      next_action: {
+        tool: 'aza_prd',
+        action: 'multi_review',
+        reason: 'Draft prompt generated; host LLM should produce PRD JSON then call multi_review',
+        instruction:
+          '使用上述 draft_prompt 生成 PRD JSON，然后调用 aza_prd(action=multi_review, prd_draft=<JSON 字符串>)',
+      },
+    };
+  }
+
+  /**
+   * V20 multi_review action — generate 4-role adversarial review prompts.
+   *
+   * Step 2 of multi-step PRD generation:
+   * 1. Parse host LLM's PRD draft
+   * 2. Generate 4-role (CEO/QA/Eng/Design) review prompts
+   * 3. Return prompts + next_action pointing to refine
+   */
+  async multiReview(prdDraft: string): Promise<{
+    review_prompts: { ceo_prompt: string; qa_prompt: string; eng_prompt: string; design_prompt: string };
+    prd_parsed: boolean;
+    parse_error?: string;
+    next_action: NextAction;
+  }> {
+    if (!prdDraft || typeof prdDraft !== 'string') {
+      return {
+        review_prompts: { ceo_prompt: '', qa_prompt: '', eng_prompt: '', design_prompt: '' },
+        prd_parsed: false,
+        parse_error: 'empty prd_draft',
+        next_action: {
+          tool: 'aza_prd',
+          action: 'draft',
+          reason: 'Empty PRD draft; regenerate',
+          instruction: 'PRD 草稿为空，请重新调用 aza_prd(action=draft) 生成草稿',
+        },
+      };
+    }
+
+    const parsed = this.prdGenerator.parseDraftResponse(prdDraft);
+    if (!parsed) {
+      return {
+        review_prompts: { ceo_prompt: '', qa_prompt: '', eng_prompt: '', design_prompt: '' },
+        prd_parsed: false,
+        parse_error: 'failed to parse PRD JSON from draft',
+        next_action: {
+          tool: 'aza_prd',
+          action: 'draft',
+          reason: 'PRD draft parsing failed; regenerate draft',
+          instruction: 'PRD 草稿解析失败，请确保返回合法 JSON 后重新调用 aza_prd(action=draft)',
+        },
+      };
+    }
+
+    // Stash parsed PRD for refine step
+    this.pendingDraftPrd = parsed;
+
+    // Generate 4-role review prompts
+    const { getMultiRoleReviewPrompts } = await import('./prd-multi-role-review');
+    const prompts = getMultiRoleReviewPrompts(parsed);
+
+    return {
+      review_prompts: prompts,
+      prd_parsed: true,
+      next_action: {
+        tool: 'aza_prd',
+        action: 'refine',
+        reason: 'Review prompts generated; host LLM should run reviews then refine',
+        instruction:
+          '使用上述 4 个 review_prompts 分别审查 PRD，汇总发现后调用 aza_prd(action=refine, refined_prd=<精炼后 JSON>, review_responses=[{role, response}, ...])',
+      },
+    };
+  }
+
+  /**
+   * V20 refine action — parse refined PRD, run check, route to approve or back to draft.
+   *
+   * Step 3 of multi-step PRD generation:
+   * 1. Parse host LLM's refined PRD
+   * 2. Run checker.check()
+   * 3. If passes, stash as pendingReview + point to approve
+   * 4. If fails, return to draft with feedback
+   */
+  async refine(
+    refinedPrd: string,
+    reviewResponses?: Array<{ role: string; response: string }>,
+  ): Promise<{
+    refined: boolean;
+    quality_score: number;
+    blockers?: string[];
+    next_action: NextAction;
+  }> {
+    if (!refinedPrd || typeof refinedPrd !== 'string') {
+      return {
+        refined: false,
+        quality_score: 0,
+        next_action: {
+          tool: 'aza_prd',
+          action: 'draft',
+          reason: 'Empty refined PRD',
+          instruction: '精炼后 PRD 为空，请重新生成',
+        },
+      };
+    }
+
+    const parsed = this.prdGenerator.parseDraftResponse(refinedPrd);
+    if (!parsed) {
+      return {
+        refined: false,
+        quality_score: 0,
+        next_action: {
+          tool: 'aza_prd',
+          action: 'draft',
+          reason: 'Refined PRD parsing failed',
+          instruction: '精炼后 PRD 解析失败，请确保返回合法 JSON',
+        },
+      };
+    }
+
+    // Run checker
+    const checkResult = this.prdChecker.check(parsed);
+
+    // Persist refined PRD
+    const azaDir = this.stateManager.azaDir ?? '.aza';
+    try {
+      const fsMod = await import('fs');
+      const pathMod = await import('path');
+      await fsMod.promises.mkdir(azaDir, { recursive: true });
+      await fsMod.promises.writeFile(
+        pathMod.join(azaDir, 'prd.json'),
+        JSON.stringify(parsed, null, 2),
+        'utf8',
+      );
+      writePrdMarkdown(azaDir, parsed);
+    } catch {
+      /* best-effort */
+    }
+
+    // If passes, stash as pendingReview and point to approve
+    if (checkResult.passed) {
+      const result: PRDReviewResult = {
+        prd_id: parsed.id,
+        title: parsed.title,
+        summary: `Refined PRD (score ${checkResult.score}/100, P0=${checkResult.p0_count}, P1=${checkResult.p1_count})`,
+        mermaid_diagram: parsed.architecture[0]?.mermaid || '',
+        key_decisions: [],
+        open_questions: [],
+        complexity: (parsed as any)._complexity || 'L2',
+        quality_score: checkResult.score,
+        self_optimize_iterations: 0,
+        needs_user_approval: false,
+        timeout_ms: this.timeoutMs,
+        instruction: 'PRD refined and passes checks. Call approve() to proceed.',
+        source: 'aza-prd',
+      };
+      Object.defineProperty(result, 'prd', {
+        value: parsed,
+        enumerable: false,
+        writable: false,
+        configurable: false,
+      });
+      this.pendingReview = result;
+      this.pendingDraftPrd = null;
+      this.pendingDraftInput = null;
+
+      return {
+        refined: true,
+        quality_score: checkResult.score,
+        next_action: {
+          tool: 'aza_prd',
+          action: 'approve',
+          reason: `PRD refined (score ${checkResult.score}/100); ready to approve`,
+          instruction: 'PRD 已通过审查，调用 aza_prd(action=approve) 进入循环',
+        },
+      };
+    }
+
+    // If fails, return to draft with feedback
+    const blockers = checkResult.details
+      .filter((d) => !d.passed && (d.severity === 'P0' || d.severity === 'P1'))
+      .map((d) => `[${d.severity}] ${d.id}: ${d.description}`);
+
+    return {
+      refined: false,
+      quality_score: checkResult.score,
+      blockers,
+      next_action: {
+        tool: 'aza_prd',
+        action: 'draft',
+        reason: `PRD still has ${blockers.length} P0/P1 issues`,
+        instruction: `PRD 仍有 ${blockers.length} 个 P0/P1 问题，请根据以下反馈重新生成草稿：\n${blockers.slice(0, 8).join('\n')}`,
+      },
+    };
   }
 
   // ── 私有辅助方法 ──
@@ -437,7 +901,7 @@ export class PRDReviewGate {
       `📌 项目名称：${prd.title}`,
       `📊 复杂度等级：${complexity}`,
       `⭐ 质量评分：${checkResult.score}/100`,
-      `🔧 P0 问题：${checkResult.p0_count}（已自动修复）`,
+      `🔧 P0：${checkResult.p0_count}  P1：${checkResult.p1_count}${checkResult.passed ? '（门禁通过）' : '（未清零）'}`,
       `📝 用户故事：${prd.stories?.length || 0} 个`,
       `🏗️ 架构图：${prd.architecture?.length || 0} 个`,
       `⚠️ 风险项：${prd.risks?.length || 0} 个`,
@@ -448,6 +912,16 @@ export class PRDReviewGate {
       `⏳ ${this.timeoutMs / 1000}s 内无输入将自动执行当前方案`,
     ];
     return lines.join('\n');
+  }
+
+  /** OpenSpec intent must stay lean — never copy UI chrome from formatSummary. */
+  private buildLeanOpenSpecIntent(prd: any, title: string, intentLock?: string): string {
+    if (intentLock && intentLock.trim().length > 20) {
+      return intentLock.trim().slice(0, 800);
+    }
+    const goals = Array.isArray(prd?.goals) ? prd.goals.slice(0, 4).join('; ') : '';
+    const overview = typeof prd?.overview === 'string' ? prd.overview.split('\n').slice(0, 6).join(' ') : '';
+    return `${title}: ${goals || overview}`.replace(/\s+/g, ' ').trim().slice(0, 800);
   }
 
   private formatInstruction(): string {
@@ -480,12 +954,14 @@ export class PRDReviewGate {
 
   private extractOpenQuestions(prd: any, checkResult: PRDCheckResult): string[] {
     const questions: string[] = [];
-    const p1Issues = checkResult.details.filter(d => d.severity === 'P1' && !d.passed);
-    for (const issue of p1Issues.slice(0, 5)) {
-      questions.push(`${issue.id}: ${issue.description}`);
+    const blockers = checkResult.details.filter(
+      (d) => !d.passed && (d.severity === 'P0' || d.severity === 'P1'),
+    );
+    for (const issue of blockers.slice(0, 8)) {
+      questions.push(`[${issue.severity}] ${issue.id}: ${issue.description}`);
     }
     if (questions.length === 0) {
-      questions.push('无待确认问题 — PRD 质量良好');
+      questions.push('无待确认问题 — P0/P1 已清零且加权分≥90');
     }
     return questions;
   }

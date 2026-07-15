@@ -290,7 +290,7 @@ describe('Trae E2E — full auto-loop pipeline', () => {
     }
     const approval = await gate.approve(answers);
     expect(approval.approved).toBe(true);
-    expect(approval.next_action.tool).toBe('aza_loop_next');
+    expect(approval.next_action.tool).toBe('aza_loop');
 
     // 3. OpenSpec artifacts were generated under <projectRoot>/openspec/.
     // PRDReviewGate derives projectRoot by stripping the trailing `/.aza`
@@ -327,10 +327,11 @@ describe('Trae E2E — full auto-loop pipeline', () => {
       collectedTools.push(r.next_action!.tool);
       // V18: For build stage (first call), verify awaiting_agent behavior
       if (stage === 'build') {
-        expect(r.next_action!.tool).toBe('aza_task_implement');
+        expect(r.next_action!.tool).toBe('aza_spec');
         // V18: awaitingAction should be propagated in data field
         expect(r.data?.awaitingAction).toBeDefined();
-        expect(r.data?.awaitingAction?.tool).toBe('aza_task_implement');
+        expect(r.data?.awaitingAction?.tool).toBe('aza_spec');
+        expect(['implement', 'design'].includes(r.data?.awaitingAction?.action as string) || r.next_action!.action === 'implement').toBe(true);
       }
     }
     expect(collectedTools.length).toBe(5);

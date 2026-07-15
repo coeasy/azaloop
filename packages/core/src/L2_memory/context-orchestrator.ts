@@ -2,6 +2,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createHash } from 'crypto';
 import type { Stage } from '../L7_loop/state-machine';
+import type { TokenBudget } from '../L7_loop/token-budget';
 
 /**
  * The category of a context entry.
@@ -109,13 +110,17 @@ const CHARS_PER_TOKEN = 4;
 export class ContextOrchestrator {
   /** Directory where JSONL context files are stored. */
   private contextDir: string;
+  /** V20 Task 4: Optional token budget used to adapt pruning strategy. */
+  private tokenBudget?: TokenBudget;
 
   /**
    * @param baseDir  The `.aza` base directory.
    *                 JSONL files are stored under `{baseDir}/context/`.
+   * @param tokenBudget  Optional token budget for adaptive pruning.
    */
-  constructor(baseDir: string) {
+  constructor(baseDir: string, tokenBudget?: TokenBudget) {
     this.contextDir = path.join(baseDir, 'context');
+    this.tokenBudget = tokenBudget;
   }
 
   // ── JSONL file generation ──
@@ -302,8 +307,41 @@ export class ContextOrchestrator {
     maxTokens: number,
     summarizeThreshold: number = 0.4,
   ): ContextEntryBundle {
+    // V20 Task 4: Adapt pruning strategy based on token budget state.
+    let workingContext = context;
+    if (this.tokenBudget) {
+      const action = this.tokenBudget.checkBudget();
+      if (action === 'stop') {
+        // Critical: keep only the single highest-priority entry.
+        const stopped = [...context.entries].sort((a, b) => b.priority - a.priority);
+        const only = stopped[0];
+        const entries = only ? [only] : [];
+        return {
+          stage: context.stage,
+          storyId: context.storyId,
+          entries,
+          totalTokens: entries.reduce((s, e) => s + e.tokenEstimate, 0),
+          source: context.source,
+        };
+      }
+      if (action === 'compress') {
+        // Drop ALL entries with priority < 0.5 outright.
+        const kept = context.entries.filter(e => e.priority >= 0.5);
+        workingContext = {
+          stage: context.stage,
+          storyId: context.storyId,
+          entries: kept,
+          totalTokens: kept.reduce((s, e) => s + e.tokenEstimate, 0),
+          source: context.source,
+        };
+      } else if (action === 'summarize') {
+        // Summarize more aggressively.
+        summarizeThreshold = 0.6;
+      }
+    }
+
     // Start with a priority-sorted copy (highest first).
-    const sorted = [...context.entries].sort((a, b) => b.priority - a.priority);
+    const sorted = [...workingContext.entries].sort((a, b) => b.priority - a.priority);
 
     // Phase 1 — Summarize low-priority entries.
     const summarized = sorted.map(entry => {

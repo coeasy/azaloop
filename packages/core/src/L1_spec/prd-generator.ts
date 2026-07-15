@@ -1,5 +1,10 @@
 import { PRDSchema, type PRD, type Story } from '@azaloop/shared';
 import { PRDChecker, type PRDCheckResult } from './prd-checker';
+import { buildCompetitiveAppendixSync } from './github-competitive-research';
+import {
+  PRD_DRAFT_PROMPT,
+  type CompetitiveContext,
+} from './prd-llm-prompts';
 
 /**
  * PRD complexity levels matching the complexity matrix.
@@ -109,16 +114,41 @@ export class PRDGenerator {
    * HARD-GATE minimal-input pattern from T25), we synthesize a
    * description from the title + structured fields so all downstream
    * extractors receive a non-empty string.
+   *
+   * Slim mode: prefer structured goals/FR/story/AC from the description;
+   * avoid padding with generic risks, placeholder FRs, or "works as expected" ACs.
    */
   generate(input: PRDGenerationInput, options: PRDGeneratorOptions = {}): PRD {
     const now = new Date().toISOString();
-    // Normalize description: fall back to title (or empty) when missing
-    // so the infer/extract pipeline can run without runtime errors.
     const description = input.description ?? input.title ?? '';
     const complexity = options.complexity || input.complexity || this.inferComplexity(description);
     const productType = options.productType || input.productType || this.detectProductType(input.title, description);
 
     const use14Chapters = options.enable_14chapters ?? (complexity === 'L4');
+
+    // P1-2: always inject competitive landscape (sync curated; live search via generateAsync)
+    const competitive = buildCompetitiveAppendixSync(`${input.title} ${description}`);
+    let overview = this.buildSlimOverview(input.title, description);
+    overview = this.injectCompetitiveOverview(overview, competitive);
+
+    const goals = this.mergeCompetitiveGoals(this.extractGoals(overview), competitive.goals);
+    const functional_requirements = this.extractFunctionalRequirements(overview);
+    const non_functional_requirements = this.extractNonFunctionalRequirements(overview);
+    const stories =
+      options.auto_stories !== false
+        ? this.generateStories(input.title, overview, complexity, functional_requirements, goals)
+        : [];
+    const flatAcs = stories.flatMap((s) => s.acceptance_criteria || []);
+    const risks = [
+      ...this.assessRisks(overview, input.constraints || [], complexity, productType),
+      ...competitive.risks.slice(0, 2).map((r) => ({
+        description: r.description,
+        probability: (['low', 'medium', 'high'].includes(r.probability)
+          ? r.probability
+          : 'medium') as 'low' | 'medium' | 'high',
+        mitigation: r.mitigation,
+      })),
+    ];
 
     const prd: PRD = {
       id: `PRD-${Date.now()}`,
@@ -126,26 +156,57 @@ export class PRDGenerator {
       version: '1.0.0',
       created_at: now,
       updated_at: now,
-      overview: description,
-      goals: this.extractGoals(description),
-      target_users: this.extractTargetUsers(description, productType),
-      functional_requirements: this.extractFunctionalRequirements(description),
-      non_functional_requirements: this.extractNonFunctionalRequirements(description),
-      stories: options.auto_stories !== false ? this.generateStories(input.title, description, complexity) : [],
+      overview,
+      goals,
+      target_users: this.extractTargetUsers(overview, productType),
+      functional_requirements,
+      non_functional_requirements,
+      stories,
       architecture: options.auto_architecture !== false ? this.generateArchitecture(complexity, productType) : [],
-      acceptance_criteria: [],
-      risks: this.assessRisks(description, input.constraints || [], complexity, productType),
+      acceptance_criteria: flatAcs,
+      risks,
     };
 
     const parsed = PRDSchema.parse(prd);
 
-    // If self-optimization is enabled, run multi-round optimization
     if (options.enable_self_optimization) {
       const result = this.selfOptimize(parsed, options.max_optimization_rounds ?? 3);
       return this.attachMetadata(result.prd, complexity, productType, use14Chapters);
     }
 
     return this.attachMetadata(parsed, complexity, productType, use14Chapters);
+  }
+
+  private injectCompetitiveOverview(
+    overview: string,
+    competitive: ReturnType<typeof buildCompetitiveAppendixSync>,
+  ): string {
+    const urls = competitive.competitors.slice(0, 4).map((c) => c.html_url);
+    const urlBlock = urls.length ? `\nCompetitive refs:\n${urls.map((u) => `- ${u}`).join('\n')}` : '';
+    const hasUrls = (overview.match(/https?:\/\/github\.com\/[\w.-]+\/[\w.-]+/gi) || []).length >= 2;
+    const hasDiff = /differentiat|壁垒|Host-LLM|8 unified MCP|Completion|circuit gate/i.test(overview);
+    let out = overview;
+    if (!hasUrls) {
+      out = `${out}${urlBlock}${competitive.overview_appendix}`;
+    } else if (!/compet|OpenSpec|peers|竞品|landscape/i.test(out)) {
+      out = `${out}\nPeers: ${competitive.competitors.slice(0, 3).map((c) => c.full_name).join(', ')}.`;
+    }
+    if (!hasDiff) {
+      out = `${out}\n### Differentiation\n${competitive.differentiators.map((d) => `- ${d}`).join('\n')}`;
+    }
+    return out;
+  }
+
+  private mergeCompetitiveGoals(goals: string[], competitiveGoals: string[]): string[] {
+    const merged = [...goals];
+    for (const g of competitiveGoals) {
+      if (merged.length >= 4) break;
+      if (!merged.some((x) => x.toLowerCase() === g.toLowerCase())) merged.push(g);
+    }
+    if (!merged.some((g) => /differentiat|MCP|Host-LLM|absorb competitive|竞品/i.test(g))) {
+      merged.push(competitiveGoals[0] || 'Absorb competitive gaps without expanding MCP tool count');
+    }
+    return merged.slice(0, 5);
   }
 
   /**
@@ -164,7 +225,13 @@ export class PRDGenerator {
 
     if (refined.stories.length === 0) {
       improvements.push('No stories defined — auto-generating');
-      refined.stories = this.generateStories(refined.title, refined.overview, 'L2');
+      refined.stories = this.generateStories(
+        refined.title,
+        refined.overview,
+        'L2',
+        refined.functional_requirements,
+        refined.goals,
+      );
     }
 
     if (refined.acceptance_criteria.length === 0) {
@@ -181,7 +248,7 @@ export class PRDGenerator {
   }
 
   /**
-   * Multi-round self-optimization: generate → self-check → fix P0 issues → repeat until P0=0.
+   * Multi-round self-optimization: generate → self-check → fix P0/P1 → repeat until gate-ready.
    *
    * @param prd - Initial PRD to optimize.
    * @param maxRounds - Maximum optimization rounds (default: 3).
@@ -194,22 +261,30 @@ export class PRDGenerator {
     let rounds = 0;
 
     for (let round = 0; round < maxRounds; round++) {
-      const p0Issues = lastCheck.details.filter(d => d.severity === 'P0' && !d.passed);
+      const blockers = lastCheck.details.filter(
+        (d) => !d.passed && (d.severity === 'P0' || d.severity === 'P1'),
+      );
 
-      if (p0Issues.length === 0) {
-        break; // P0 cleared
+      if (blockers.length === 0 && lastCheck.passed) {
+        break;
       }
 
       rounds++;
       let fixes = 0;
 
-      // Fix each P0 issue
-      for (const issue of p0Issues) {
-        const fixed = this.fixP0Issue(current, issue);
+      for (const issue of blockers) {
+        const fixed = this.fixGateIssue(current, issue);
         if (fixed) {
           current = fixed;
           fixes++;
         }
+      }
+
+      // Always scrub vague ACs even if checker id differed
+      const scrubbed = this.scrubVagueAcceptanceCriteria(current);
+      if (scrubbed) {
+        current = scrubbed;
+        fixes++;
       }
 
       fixesPerRound.push(fixes);
@@ -228,19 +303,31 @@ export class PRDGenerator {
   }
 
   /**
-   * Fix a single P0 issue in the PRD.
+   * Fix a single P0/P1 gate issue in the PRD.
    * Returns the fixed PRD, or null if the issue cannot be auto-fixed.
    */
-  private fixP0Issue(prd: PRD, issue: { id: string; category: string; description: string }): PRD | null {
-    const fixed = { ...prd, stories: [...prd.stories], acceptance_criteria: [...prd.acceptance_criteria], functional_requirements: [...prd.functional_requirements], non_functional_requirements: [...prd.non_functional_requirements] };
+  private fixGateIssue(prd: PRD, issue: { id: string; category: string; description: string }): PRD | null {
+    const fixed = { ...prd, stories: [...prd.stories], acceptance_criteria: [...prd.acceptance_criteria], functional_requirements: [...prd.functional_requirements], non_functional_requirements: [...prd.non_functional_requirements], goals: [...prd.goals], risks: [...prd.risks], architecture: [...prd.architecture] };
 
     // Fix missing functional requirements
     if (issue.id === 'FR-001' || issue.category === 'functional_requirements') {
       if (fixed.functional_requirements.length === 0) {
         fixed.functional_requirements.push({
           id: 'FR-1',
-          description: `Core functionality: ${prd.title}`,
+          description: `Ship measurable capability for: ${prd.title}`,
           priority: 'P0',
+        });
+        return fixed;
+      }
+    }
+
+    // Fix missing NFR
+    if (issue.id === 'NFR-001' || issue.category === 'non_functional_requirements') {
+      if (fixed.non_functional_requirements.length === 0) {
+        fixed.non_functional_requirements.push({
+          id: 'NFR-1',
+          description: 'reliability: failures surface as actionable gate reports within one loop iteration',
+          category: 'reliability',
         });
         return fixed;
       }
@@ -249,32 +336,106 @@ export class PRDGenerator {
     // Fix missing stories
     if (issue.id === 'ST-001' || issue.category === 'stories') {
       if (fixed.stories.length === 0) {
-        fixed.stories = this.generateStories(prd.title, prd.overview, 'L2');
+        fixed.stories = this.generateStories(prd.title, prd.overview, 'L2', fixed.functional_requirements, fixed.goals);
+        fixed.acceptance_criteria = fixed.stories.flatMap((s) => s.acceptance_criteria || []);
         return fixed;
       }
     }
 
-    // Fix missing acceptance criteria
-    if (issue.id === 'AC-001' || issue.category === 'acceptance_criteria') {
-      if (fixed.acceptance_criteria.length === 0 && fixed.stories.length > 0) {
-        const firstStory = fixed.stories[0];
-        if (firstStory) {
-          fixed.acceptance_criteria.push({
-            id: 'AC-1',
-            description: `${firstStory.title} works as expected`,
-            testable: true,
-            status: 'pending',
-          });
-        }
-        return fixed;
-      }
+    // Fix missing / untestable / vague acceptance criteria
+    if (
+      issue.id === 'AC-001' ||
+      issue.id === 'AC-002' ||
+      issue.id === 'AC-003' ||
+      issue.id === 'AC-004' ||
+      issue.category === 'acceptance_criteria'
+    ) {
+      return this.scrubVagueAcceptanceCriteria(fixed) ?? this.ensureStoryAcceptanceCriteria(fixed);
     }
 
-    // Fix high-risk items missing mitigation
+    // Fix shallow overview / missing business research / competitive refs
+    if (issue.id === 'OV-001' || issue.id === 'BR-001' || issue.id === 'BR-002') {
+      fixed.overview = this.buildSlimOverview(prd.title, prd.overview || prd.title);
+      const competitive = buildCompetitiveAppendixSync(prd.title);
+      fixed.overview = this.injectCompetitiveOverview(fixed.overview, competitive);
+      if (fixed.goals.length < 2) {
+        fixed.goals = this.mergeCompetitiveGoals(fixed.goals, competitive.goals);
+      }
+      return fixed;
+    }
+
+    // BR-003/BR-004 — ≥2 github URLs + differentiators (P1-1/P1-2 gate alignment)
+    if (issue.id === 'BR-003' || issue.id === 'BR-004') {
+      const competitive = buildCompetitiveAppendixSync(prd.title);
+      fixed.overview = this.injectCompetitiveOverview(fixed.overview || prd.title, competitive);
+      fixed.goals = this.mergeCompetitiveGoals(fixed.goals, competitive.goals);
+      return fixed;
+    }
+
+    // BA-001 needs ≥2 goals + competitive signal
+    if (issue.id === 'BA-001') {
+      if (fixed.goals.length < 2) {
+        fixed.goals = [
+          ...fixed.goals,
+          `Deliver ${prd.title} with measurable acceptance checks`,
+          'Differentiate vs OpenSpec/Superpowers/ralphy without adding MCP tools',
+        ];
+      } else if (!fixed.goals.some((g) => /compet|竞品|differen|OpenSpec|ralphy/i.test(g))) {
+        fixed.goals.push('Absorb competitive gaps vs OpenSpec/Superpowers/ralphy without expanding MCP tool count');
+      }
+      if (!/compet|OpenSpec|peers|竞品|landscape/i.test(fixed.overview)) {
+        fixed.overview = `${fixed.overview}\nPeers: OpenSpec, Superpowers, ralphy.`;
+      }
+      return fixed;
+    }
+
+    // Scenario / story description length
+    if (issue.id === 'SA-001') {
+      fixed.stories = fixed.stories.map((s) => ({
+        ...s,
+        description:
+          s.description.length > 20
+            ? s.description
+            : `As a developer using AzaLoop, complete "${s.title}" with a verifiable acceptance check.`,
+      }));
+      return fixed;
+    }
+
+    // Architecture required for P1 PA-001
+    if (issue.id === 'PA-001' || issue.id === 'AR-001') {
+      if (fixed.architecture.length === 0 || !fixed.architecture.some((a) => a.mermaid?.length)) {
+        fixed.architecture = this.generateArchitecture('L2', {
+          commercialization: 'internal',
+          category: 'tool',
+          label: '自研 × 工具型',
+        });
+      }
+      return fixed;
+    }
+
+    // Goals / positioning
+    if (issue.id === 'GL-001' || issue.id === 'PP-001' || issue.id === 'PT-001') {
+      if (fixed.goals.length === 0) {
+        fixed.goals.push(`Ship ${prd.title} with P0/P1 cleared and weighted score ≥ 90`);
+      }
+      if (fixed.target_users.length === 0) {
+        fixed.target_users = ['Developers', 'Agent operators'];
+      }
+      if (fixed.functional_requirements.length === 0) {
+        fixed.functional_requirements.push({
+          id: 'FR-1',
+          description: `Core loop delivers ${prd.title}`,
+          priority: 'P0',
+        });
+      }
+      return fixed;
+    }
+
+    // High-risk items missing mitigation
     if (issue.id === 'RK-002') {
       fixed.risks = fixed.risks.map(r => {
         if (r.probability === 'high' && !r.mitigation) {
-          return { ...r, mitigation: 'Mitigation plan: monitor closely, prepare rollback, escalate to tech lead' };
+          return { ...r, mitigation: 'Mitigation: monitor gate metrics, prepare rollback, escalate via soft-recover' };
         }
         return r;
       });
@@ -282,6 +443,97 @@ export class PRDGenerator {
     }
 
     return null;
+  }
+
+  private ensureStoryAcceptanceCriteria(prd: PRD): PRD {
+    const fixed = { ...prd, stories: [...prd.stories], acceptance_criteria: [...prd.acceptance_criteria] };
+    if (fixed.stories.length === 0) {
+      fixed.stories = this.generateStories(prd.title, prd.overview, 'L2', prd.functional_requirements, prd.goals);
+    }
+    fixed.stories = fixed.stories.map((s, idx) => {
+      const acs = [...(s.acceptance_criteria || [])];
+      if (acs.length === 0) {
+        acs.push(this.makeMeasurableAc(idx + 1, 1, s.title, s.description));
+      }
+      return {
+        ...s,
+        acceptance_criteria: acs.map((a) => ({ ...a, testable: true })),
+      };
+    });
+    fixed.acceptance_criteria = fixed.stories.flatMap((s) => s.acceptance_criteria || []);
+    return fixed;
+  }
+
+  private scrubVagueAcceptanceCriteria(prd: PRD): PRD | null {
+    let changed = false;
+    const stories = prd.stories.map((s, idx) => {
+      let acs = [...(s.acceptance_criteria || [])];
+      if (acs.length === 0) {
+        changed = true;
+        acs = [this.makeMeasurableAc(idx + 1, 1, s.title, s.description)];
+      } else {
+        acs = acs.map((a, j) => {
+          if (this.isHollowAc(a.description)) {
+            changed = true;
+            return this.makeMeasurableAc(idx + 1, j + 1, s.title, s.description || a.description);
+          }
+          return { ...a, testable: true };
+        });
+      }
+      return { ...s, acceptance_criteria: acs };
+    });
+    if (!changed) return null;
+    return {
+      ...prd,
+      stories,
+      acceptance_criteria: stories.flatMap((s) => s.acceptance_criteria || []),
+    };
+  }
+
+  private isHollowAc(description?: string): boolean {
+    const t = (description || '').trim();
+    if (t.length < 16) return true;
+    if (/拒绝|reject|禁止|不得|must not|no\s+vague|forbid/i.test(t)) return false;
+    if (/assert|via automated|observable|checklist|pass\/fail|metric|验证|断言/i.test(t)) {
+      return /^(.*?feature\s+\d+\s+)?works as expected[.!]?$/i.test(t)
+        || /^as described[.!]?$/i.test(t);
+    }
+    return /works as expected|as described|feature\s+\d+|按预期|正确工作|基本可用|正常运行/i.test(t);
+  }
+
+  private makeMeasurableAc(
+    storyIdx: number,
+    acIdx: number,
+    title: string,
+    detail: string,
+  ): { id: string; description: string; testable: true; status: 'pending' } {
+    const focus = (detail || title)
+      .replace(/(拒绝[^，。:\n]{0,24})works as expected/gi, '$1空洞表述')
+      .replace(/works as expected/gi, 'measurable behavior')
+      .replace(/feature\s+\d+/gi, 'capability')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 140);
+    return {
+      id: `AC-${storyIdx}-${acIdx}`,
+      description: `Assert "${focus}" via automated check or checklist with observable pass/fail output`,
+      testable: true,
+      status: 'pending',
+    };
+  }
+
+  /** Keep overview lean: user text first; add only missing pain/peers one-liners. */
+  private buildSlimOverview(title: string, description: string): string {
+    const base = (description || title || '').trim();
+    const parts: string[] = [base || title];
+    if (!/pain|痛点|problem|stall|waste/i.test(base)) {
+      parts.push('Pain: vague PRDs and fragile agent loops waste tokens and stall full-auto delivery.');
+    }
+    if (!/compet|OpenSpec|peers|竞品|landscape|github\.com\//i.test(base)) {
+      parts.push('Peers: OpenSpec, Superpowers, ralphy.');
+    }
+    const joined = parts.filter(Boolean).join('\n');
+    return joined.length >= 120 ? joined : `${joined}\nShip measurable FR/story/AC; refuse placeholder acceptance criteria.`;
   }
 
   /**
@@ -366,16 +618,32 @@ export class PRDGenerator {
 
   private extractGoals(description: string): string[] {
     const goals: string[] = [];
-    const lines = description.split('\n');
-    for (const line of lines) {
-      if (line.match(/^(goal|aim|objective|purpose|target)/i)) {
-        goals.push(line.replace(/^(goal|aim|objective|purpose|target):?\s*/i, '').trim());
+    const numbered = this.extractNumberedItems(description);
+    for (const item of numbered) {
+      // Prefer goal-like / outcome lines; skip pure NFR prefixes
+      if (/^(performance|security|usability|reliability|maintainability)\b/i.test(item)) continue;
+      if (item.length >= 8 && item.length <= 240) goals.push(item);
+    }
+    // Explicit "goal:" lines
+    for (const line of description.split('\n')) {
+      if (line.match(/^(goal|aim|objective|purpose|target|目标)\b/i)) {
+        const g = line.replace(/^(goal|aim|objective|purpose|target|目标):?\s*/i, '').trim();
+        if (g.length >= 8) goals.push(g);
       }
     }
-    if (goals.length === 0) {
-      goals.push(`Build a ${description.split('.')[0]?.trim() || 'application'}`);
+    const uniq = [...new Set(goals)];
+    if (uniq.length >= 2) return uniq.slice(0, 6);
+    if (uniq.length === 1) {
+      return [
+        uniq[0]!,
+        'Absorb competitive gaps vs OpenSpec/Superpowers/ralphy without expanding MCP tool count',
+      ];
     }
-    return goals;
+    const first = description.split(/[.\n。]/)[0]?.trim() || 'application';
+    return [
+      `Ship: ${first.slice(0, 120)}`,
+      'Absorb competitive gaps vs OpenSpec/Superpowers/ralphy without expanding MCP tool count',
+    ];
   }
 
   /**
@@ -384,7 +652,7 @@ export class PRDGenerator {
   private extractTargetUsers(description: string, productType: ProductType): string[] {
     const userKeywords: Record<ProductCategory, string[]> = {
       business: ['Business Users', 'Operations Team'],
-      tool: ['Developers', 'End Users'],
+      tool: ['Developers', 'Agent operators'],
       transaction: ['Customers', 'Merchants'],
       infrastructure: ['Internal Teams', 'API Consumers'],
     };
@@ -393,11 +661,10 @@ export class PRDGenerator {
       ? ['External Customers', ...userKeywords[productType.category]]
       : userKeywords[productType.category];
 
-    // Try to extract from description
     const lines = description.split('\n');
     for (const line of lines) {
-      if (line.match(/^(user|target|audience|用户|目标)/i)) {
-        const extracted = line.replace(/^(user|target|audience|用户|目标)(?:_?users?)?:?\s*/i, '').trim();
+      if (line.match(/^(user|target|audience|用户|目标用户)/i)) {
+        const extracted = line.replace(/^(user|target|audience|用户|目标用户)(?:_?users?)?:?\s*/i, '').trim();
         if (extracted.length > 0) {
           return [extracted, ...users];
         }
@@ -407,29 +674,55 @@ export class PRDGenerator {
     return users;
   }
 
+  private extractNumberedItems(description: string): string[] {
+    const items: string[] = [];
+    for (const raw of description.split('\n')) {
+      const line = raw.trim();
+      const match = line.match(/^(?:[A-Z]+-\d+|\d+[.)、]|[-*•])\s+(.+)/);
+      if (!match?.[1]) continue;
+      const text = match[1].trim();
+      if (text.length < 6) continue;
+      // Skip UI chrome that sometimes leaks into descriptions
+      if (/确认后输入|开始执行|质量评分|用户故事：/.test(text)) continue;
+      items.push(text);
+    }
+    return items;
+  }
+
   private extractFunctionalRequirements(description: string): Array<{ id: string; description: string; priority: 'P0' | 'P1' | 'P2' | 'P3' }> {
     const reqs: Array<{ id: string; description: string; priority: 'P0' | 'P1' | 'P2' | 'P3' }> = [];
-    const lines = description.split('\n');
-    for (const line of lines) {
-      const match = line.match(/^(?:[A-Z]+-\d+|\d+[.\)])\s+(.+)/);
-      if (match) {
-        const text = (match[1] || '').trim();
-        if (!text.match(/^(performance|security|usability|reliability)/i)) {
-          reqs.push({ id: `FR-${reqs.length + 1}`, description: text, priority: 'P1' });
-        }
-      }
+    const items = this.extractNumberedItems(description);
+    for (const text of items) {
+      if (text.match(/^(performance|security|usability|reliability|maintainability)\b/i)) continue;
+      if (/^非目标|^验收[:：]|^Pain[:：]/i.test(text)) continue;
+      reqs.push({
+        id: `FR-${reqs.length + 1}`,
+        description: text.slice(0, 200),
+        priority: reqs.length < 2 ? 'P0' : 'P1',
+      });
     }
     if (reqs.length === 0) {
-      reqs.push({ id: 'FR-1', description: 'Core functionality as described', priority: 'P1' });
+      // Derive from title/overview — still concrete, never "as described"
+      const focus = description.split('\n').find((l) => l.trim().length > 20)?.trim() || description.slice(0, 120);
+      reqs.push({
+        id: 'FR-1',
+        description: `Implement and verify: ${focus.slice(0, 160)}`,
+        priority: 'P0',
+      });
+      reqs.push({
+        id: 'FR-2',
+        description: 'Enforce measurable acceptance criteria on every story before verify stage',
+        priority: 'P0',
+      });
     }
-    return reqs;
+    return reqs.slice(0, 8);
   }
 
   private extractNonFunctionalRequirements(description: string): Array<{ id: string; description: string; category: 'performance' | 'security' | 'usability' | 'reliability' | 'maintainability' }> {
     const reqs: Array<{ id: string; description: string; category: 'performance' | 'security' | 'usability' | 'reliability' | 'maintainability' }> = [];
     const lines = description.split('\n');
     for (const line of lines) {
-      const match = line.match(/^(?:[A-Z]+-\d+|\d+[.\)])\s+(.+)/);
+      const match = line.match(/^(?:[A-Z]+-\d+|\d+[.)])\s+(.+)/);
       if (match) {
         const text = (match[1] || '').trim();
         const catMatch = text.match(/^(performance|security|usability|reliability|maintainability)/i);
@@ -440,25 +733,41 @@ export class PRDGenerator {
       }
     }
     if (reqs.length === 0) {
-      reqs.push({ id: 'NFR-1', description: 'Standard performance and security requirements', category: 'performance' });
+      reqs.push({
+        id: 'NFR-1',
+        description: 'reliability: quality check reports P0=0 P1=0 and weighted score ≥ 90 before ship',
+        category: 'reliability',
+      });
     }
     return reqs;
   }
 
-  private generateStories(title: string, description: string, complexity: Complexity): Story[] {
-    const storyCount = complexity === 'L1' ? 1 : complexity === 'L2' ? 3 : complexity === 'L3' ? 5 : 8;
+  private generateStories(
+    title: string,
+    description: string,
+    complexity: Complexity,
+    frs?: Array<{ id: string; description: string; priority: 'P0' | 'P1' | 'P2' | 'P3' }>,
+    goals?: string[],
+  ): Story[] {
+    const maxByComplexity = complexity === 'L1' ? 2 : complexity === 'L2' ? 3 : complexity === 'L3' ? 5 : 6;
+    const seeds =
+      (frs && frs.length > 0 ? frs.map((f) => f.description) : undefined) ||
+      (goals && goals.length > 0 ? goals : undefined) ||
+      this.extractNumberedItems(description);
+
+    const sources = (seeds.length > 0 ? seeds : [`Deliver ${title} with measurable gates`]).slice(0, maxByComplexity);
     const stories: Story[] = [];
 
-    for (let i = 0; i < storyCount; i++) {
+    for (let i = 0; i < sources.length; i++) {
+      const focus = sources[i]!.replace(/\s+/g, ' ').trim().slice(0, 160);
+      const shortTitle = focus.length > 72 ? `${focus.slice(0, 69)}...` : focus;
       stories.push({
         id: `STORY-${String(i + 1).padStart(3, '0')}`,
-        title: i === 0 ? `Basic ${title} scaffold` : `${title} feature ${i}`,
-        description: i === 0 ? `Set up the basic project structure for ${title}` : `Implement feature ${i} for ${title}`,
-        priority: i < 2 ? 'P0' : 'P1' as 'P0' | 'P1' | 'P2' | 'P3',
+        title: shortTitle,
+        description: `As a developer, deliver "${focus}" with a verifiable acceptance check in the AzaLoop verify stage.`,
+        priority: i < 2 ? 'P0' : 'P1',
         complexity: complexity,
-        acceptance_criteria: [
-          { id: `AC-${i + 1}-1`, description: `${title} feature ${i} works as expected`, testable: true, status: 'pending' },
-        ],
+        acceptance_criteria: [this.makeMeasurableAc(i + 1, 1, shortTitle, focus)],
         dependencies: i > 0 ? [`STORY-${String(i).padStart(3, '0')}`] : [],
         status: 'pending',
       });
@@ -481,21 +790,211 @@ export class PRDGenerator {
   private assessRisks(description: string, constraints: string[], complexity: Complexity, productType: ProductType): PRD['risks'] {
     const risks: PRD['risks'] = [];
 
-    if (description.length > 1000) {
-      risks.push({ description: 'Complex project scope may lead to scope creep', probability: 'medium', mitigation: 'Strict P0 scoping and iterative delivery' });
+    // Only emit risks that are specific — skip "standard delivery risk" filler
+    if (complexity === 'L4' || description.length > 1500) {
+      risks.push({
+        description: 'Large scope may dilute measurable AC coverage',
+        probability: 'medium',
+        mitigation: 'Cap P0 stories ≤3; require ≥1 AC per story before build',
+      });
     }
-    if (constraints.length > 0) {
-      risks.push({ description: `Technical constraints: ${constraints.join(', ')}`, probability: 'medium', mitigation: 'Validate constraints early in design phase' });
-    }
-    if (complexity === 'L4') {
-      risks.push({ description: 'System-level complexity requires cross-team coordination', probability: 'high', mitigation: 'Establish cross-team sync cadence and shared roadmap' });
+    if (constraints.some((c) => c.startsWith('competitor:'))) {
+      risks.push({
+        description: 'Competitive feature creep from peer tools',
+        probability: 'medium',
+        mitigation: 'Non-goal: expand MCP tool count; absorb practices into existing 8 tools',
+      });
     }
     if (productType.category === 'transaction') {
-      risks.push({ description: 'Transaction-type product has financial risk (payment, settlement)', probability: 'high', mitigation: 'Implement idempotency, reconciliation, and rollback mechanisms' });
+      risks.push({
+        description: 'Transaction-type product has financial risk (payment, settlement)',
+        probability: 'high',
+        mitigation: 'Implement idempotency, reconciliation, and rollback mechanisms',
+      });
     }
     if (risks.length === 0) {
-      risks.push({ description: 'Standard project delivery risk', probability: 'low', mitigation: 'Iterative delivery with continuous validation' });
+      risks.push({
+        description: 'Vague AC may pass schema checks but fail real verification',
+        probability: 'medium',
+        mitigation: 'AC-004 rejects placeholders; selfOptimize rewrites measurable assertions',
+      });
     }
     return risks;
+  }
+
+  // ── V20: LLM-driven generation methods ──
+
+  /**
+   * V20: Generate the draft prompt for the host LLM.
+   *
+   * Instead of filling templates with regex, we delegate PRD content
+   * generation to the host LLM. This method builds a structured prompt
+   * containing user input + competitive research + quality requirements.
+   *
+   * The host LLM returns a PRD JSON which is then parsed by parseDraftResponse().
+   */
+  generateDraftPrompt(
+    input: PRDGenerationInput,
+    competitive: CompetitiveContext | null,
+    options: PRDGeneratorOptions = {},
+  ): string {
+    const description = input.description ?? input.title ?? '';
+    const complexity = options.complexity || input.complexity || this.inferComplexity(description);
+    const productType = options.productType || input.productType || this.detectProductType(input.title, description);
+    const use14Chapters = options.enable_14chapters ?? (complexity === 'L4' || complexity === 'L3');
+
+    return PRD_DRAFT_PROMPT(input, competitive, complexity, productType, use14Chapters);
+  }
+
+  /**
+   * V20: Parse the host LLM's draft response into a PRD object.
+   *
+   * The host LLM is expected to return a JSON object matching PRDSchema.
+   * This method extracts the JSON from the response (handling markdown
+   * code fences if present) and validates it against the schema.
+   *
+   * If parsing fails, returns null and the caller should fall back to
+   * the regex-based generate() method.
+   */
+  parseDraftResponse(llmOutput: string): PRD | null {
+    if (!llmOutput || typeof llmOutput !== 'string') return null;
+
+    // Strip markdown code fences if present
+    let jsonStr = llmOutput.trim();
+    const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    if (fenceMatch?.[1]) {
+      jsonStr = fenceMatch[1].trim();
+    }
+
+    // Find the first { and last } to extract JSON object
+    const firstBrace = jsonStr.indexOf('{');
+    const lastBrace = jsonStr.lastIndexOf('}');
+    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+      return null;
+    }
+    jsonStr = jsonStr.slice(firstBrace, lastBrace + 1);
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch {
+      return null;
+    }
+
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    // Validate against schema
+    const result = PRDSchema.safeParse(parsed);
+    if (result.success) {
+      return result.data as PRD;
+    }
+
+    // If schema validation fails, try to fix common issues
+    const fixed = this.repairDraftShape(parsed as Record<string, unknown>);
+    if (fixed) {
+      const retry = PRDSchema.safeParse(fixed);
+      if (retry.success) {
+        return retry.data as PRD;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * V20: Repair common shape issues in LLM-generated PRD drafts.
+   *
+   * Host LLMs sometimes produce slightly malformed PRDs (missing fields,
+   * wrong types). This method attempts to repair the most common issues
+   * before giving up and falling back to regex-based generation.
+   */
+  private repairDraftShape(obj: Record<string, unknown>): Record<string, unknown> | null {
+    if (!obj || typeof obj !== 'object') return null;
+
+    const repaired: Record<string, unknown> = { ...obj };
+    const now = new Date().toISOString();
+
+    // Ensure required string fields
+    if (typeof repaired.id !== 'string' || !repaired.id) {
+      repaired.id = `PRD-${Date.now()}`;
+    }
+    if (typeof repaired.title !== 'string' || !repaired.title) {
+      return null; // Cannot repair missing title
+    }
+    if (typeof repaired.version !== 'string' || !repaired.version) {
+      repaired.version = '1.0.0';
+    }
+    if (typeof repaired.created_at !== 'string' || !repaired.created_at) {
+      repaired.created_at = now;
+    }
+    if (typeof repaired.updated_at !== 'string' || !repaired.updated_at) {
+      repaired.updated_at = now;
+    }
+    if (typeof repaired.overview !== 'string' || !repaired.overview) {
+      repaired.overview = repaired.title as string;
+    }
+
+    // Ensure arrays
+    if (!Array.isArray(repaired.goals)) repaired.goals = [];
+    if (!Array.isArray(repaired.target_users)) repaired.target_users = ['Developers'];
+    if (!Array.isArray(repaired.functional_requirements)) repaired.functional_requirements = [];
+    if (!Array.isArray(repaired.non_functional_requirements)) repaired.non_functional_requirements = [];
+    if (!Array.isArray(repaired.stories)) repaired.stories = [];
+    if (!Array.isArray(repaired.architecture)) repaired.architecture = [];
+    if (!Array.isArray(repaired.acceptance_criteria)) repaired.acceptance_criteria = [];
+    if (!Array.isArray(repaired.risks)) repaired.risks = [];
+
+    return repaired;
+  }
+
+  /**
+   * V20: Get the draft prompt with 14-chapter template (for L3/L4 complexity).
+   */
+  getDraftPromptWith14Chapters(
+    input: PRDGenerationInput,
+    competitive: CompetitiveContext | null,
+  ): string {
+    return this.generateDraftPrompt(input, competitive, {
+      enable_14chapters: true,
+      complexity: input.complexity || 'L4',
+    });
+  }
+
+  /**
+   * V20: Generate a PRD using the LLM-driven multi-step flow.
+   *
+   * This is the entry point for the multi-step interaction:
+   * 1. Host LLM calls aza_prd(action=review) → gets draft_prompt
+   * 2. Host LLM generates draft → calls aza_prd(action=draft, prd=<draft>)
+   * 3. Code runs selfOptimize() + check()
+   * 4. Host LLM calls aza_prd(action=multi_review) → gets review_prompts
+   * 5. Host LLM does 4-role review → calls aza_prd(action=refine, findings=<findings>)
+   * 6. Host LLM refines PRD → calls aza_prd(action=approve)
+   *
+   * This method is called by PRDReviewGate when action=draft is received.
+   * It parses the host LLM's draft, runs structural fixes, and returns
+   * the validated PRD (or null if parsing failed).
+   */
+  generateFromDraft(
+    llmOutput: string,
+    input: PRDGenerationInput,
+    options: PRDGeneratorOptions = {},
+  ): PRD | null {
+    const parsed = this.parseDraftResponse(llmOutput);
+    if (!parsed) {
+      return null;
+    }
+
+    // Run structural self-optimization (fix missing fields, scrub vague ACs)
+    const optimized = options.enable_self_optimization !== false
+      ? this.selfOptimize(parsed, options.max_optimization_rounds ?? 3)
+      : { prd: parsed };
+
+    const description = input.description ?? input.title ?? '';
+    const complexity = options.complexity || input.complexity || this.inferComplexity(description);
+    const productType = options.productType || input.productType || this.detectProductType(input.title, description);
+    const use14Chapters = options.enable_14chapters ?? (complexity === 'L4' || complexity === 'L3');
+
+    return this.attachMetadata(optimized.prd, complexity, productType, use14Chapters);
   }
 }

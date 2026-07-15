@@ -53,7 +53,8 @@
   "dependencies": {
     "@azaloop/core": "workspace:*",
     "@azaloop/shared": "workspace:*",
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "js-yaml": "^4.1.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

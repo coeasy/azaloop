@@ -64,6 +64,18 @@ export interface LoopCompleteResult {
   reason: string;
 }
 
+/**
+ * V20 Task 2: Paused result returned when the loop yields to the host AI
+ * mid-execution (awaitingAction). The host must execute the specified tool
+ * then call aza_loop(action=report_tool) to resume. Extends LoopCompleteResult
+ * so existing callers keep accessing common fields without narrowing.
+ */
+export interface LoopPausedResult extends LoopCompleteResult {
+  status: 'paused';
+  awaitingAction: NextAction;
+  instruction: string;
+}
+
 export type LoopDriverStatus = 'idle' | 'running' | 'paused' | 'completed' | 'escalated' | 'stopped';
 
 /**
@@ -143,12 +155,25 @@ export class AutoLoopDriver {
    *   4. Record action for deadlock detection
    *   5. Repeat until done/stop/escalate
    */
-  async runFull(): Promise<LoopCompleteResult> {
+  async runFull(): Promise<LoopCompleteResult | LoopPausedResult> {
     this.status = 'running';
     this.iteration = 0;
 
     while (this.iteration < this.options.maxIterations) {
       const stepResult = await this.step();
+      // V20 Task 2: don't break — return paused with continuation instruction
+      if (stepResult.awaitingAction) {
+        this.status = 'paused';
+        return {
+          status: 'paused',
+          awaitingAction: stepResult.awaitingAction,
+          instruction: '执行指定工具后立即调用 aza_loop(action=report_tool) 续跑',
+          totalIterations: this.iteration,
+          finalStage: this.currentStage,
+          completed: false,
+          reason: 'Paused: awaiting host tool execution',
+        };
+      }
       if (stepResult.done) {
         break;
       }
@@ -160,6 +185,45 @@ export class AutoLoopDriver {
       finalStage: this.currentStage,
       completed: (this.status as LoopDriverStatus) === 'completed',
       reason: this.getCompletionReason(),
+    };
+  }
+
+  /**
+   * V20 Task 2: Continuous mode for single-conversation execution.
+   *
+   * Like runFull but never breaks on awaitingAction — instead returns
+   * a paused result with instruction so the host AI can continue
+   * the loop in the same conversation.
+   */
+  async runContinuous(maxIterations: number = 50): Promise<LoopCompleteResult | LoopPausedResult> {
+    for (let i = 0; i < maxIterations; i++) {
+      const stepResult = await this.step();
+      if (stepResult.awaitingAction) {
+        this.status = 'paused';
+        return {
+          status: 'paused',
+          awaitingAction: stepResult.awaitingAction,
+          instruction: '执行指定工具后立即调用 aza_loop(action=report_tool) 续跑',
+          totalIterations: this.iteration,
+          finalStage: this.currentStage,
+          completed: false,
+          reason: 'Paused: awaiting host tool execution',
+        };
+      }
+      if (stepResult.done) {
+        return {
+          totalIterations: this.iteration,
+          finalStage: this.currentStage,
+          completed: this.status === 'completed',
+          reason: this.getCompletionReason(),
+        };
+      }
+    }
+    return {
+      totalIterations: this.iteration,
+      finalStage: this.currentStage,
+      completed: false,
+      reason: `Max iterations (${maxIterations}) reached`,
     };
   }
 
@@ -178,7 +242,7 @@ export class AutoLoopDriver {
       this.status = 'stopped';
       return {
         done: true,
-        nextAction: { tool: 'aza_loop_next', action: 'stop', reason: `Max iterations (${this.options.maxIterations}) reached` },
+        nextAction: { tool: 'aza_loop', action: 'stop', reason: `Max iterations (${this.options.maxIterations}) reached` },
         stage: this.currentStage,
         iteration: this.iteration,
         awaitingAction: null,
@@ -226,7 +290,7 @@ export class AutoLoopDriver {
     const stepInfo: StepInfo = {
       iteration: this.iteration,
       stage,
-      action: action ?? { tool: 'aza_loop_next', action: 'next', reason: 'Continue' },
+      action: action ?? { tool: 'aza_loop', action: 'next', reason: 'Continue' },
       result,
       sentinel,
       totalIterations: this.options.maxIterations,

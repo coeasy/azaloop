@@ -53,8 +53,8 @@ describe('PreSkillInvocationGuard (v14-P7.1)', () => {
     const skill = makeSkill({ when_to_use: 'run unit tests for the API module' });
     const result = checkPreSkill(skill, {
       stage: 'verify',
-      tags: ['tests', 'api'],
-      intent: 'running tests for the module',
+      tags: ['tests', 'api', 'unit'],
+      intent: 'running unit tests for the module',
     });
     expect(result.allowed).toBe(true);
     expect(result.score).toBeGreaterThan(0);

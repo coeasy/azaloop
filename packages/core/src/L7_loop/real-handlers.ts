@@ -166,6 +166,63 @@ function scanTestResults(workDir: string): { hasTests: boolean; passRate: number
 /**
  * V17: Scan for existing documentation files.
  */
+function detectOpenSpecTasksComplete(workDir: string): boolean {
+  const changesRoot = path.join(workDir, 'openspec', 'changes');
+  if (!fs.existsSync(changesRoot)) return false;
+  try {
+    const dirs = fs.readdirSync(changesRoot, { withFileTypes: true }).filter((d) => d.isDirectory() && d.name !== 'archive');
+    for (const d of dirs) {
+      const tasksPath = path.join(changesRoot, d.name, 'tasks.md');
+      if (!fs.existsSync(tasksPath)) continue;
+      const body = fs.readFileSync(tasksPath, 'utf8');
+      const open = (body.match(/- \[ \]/g) || []).length;
+      const done = (body.match(/- \[x\]/gi) || []).length;
+      if (done > 0 && open === 0) return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+function hasBuildCompleteMarker(azaDir: string): boolean {
+  return fs.existsSync(path.join(azaDir, 'build-complete.marker'));
+}
+
+/**
+ * OpenSpec change is "design ready" when proposal + design + tasks exist
+ * under openspec/changes/<id>/ (0.3.x competitive synthesis).
+ */
+function detectOpenSpecDesignReady(workDir: string): { ready: boolean; changeId?: string } {
+  const changesRoot = path.join(workDir, 'openspec', 'changes');
+  if (!fs.existsSync(changesRoot)) return { ready: false };
+  try {
+    const dirs = fs.readdirSync(changesRoot, { withFileTypes: true }).filter((d) => d.isDirectory() && d.name !== 'archive');
+    for (const d of dirs) {
+      const base = path.join(changesRoot, d.name);
+      const hasProposal = fs.existsSync(path.join(base, 'proposal.md'));
+      const hasDesign = fs.existsSync(path.join(base, 'design.md'));
+      const hasTasks = fs.existsSync(path.join(base, 'tasks.md'));
+      if (hasProposal && hasDesign && hasTasks) {
+        const designBody = fs.readFileSync(path.join(base, 'design.md'), 'utf8');
+        const proposalBody = fs.readFileSync(path.join(base, 'proposal.md'), 'utf8');
+        // Lean design is OK if it has a Technical Approach section and is non-trivial;
+        // reject UI-chrome polluted proposals still.
+        const leanOk =
+          designBody.includes('## Technical Approach') &&
+          designBody.trim().length >= 80 &&
+          !/确认后输入|开始执行|质量评分：/.test(proposalBody);
+        if (leanOk) {
+          return { ready: true, changeId: d.name };
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return { ready: false };
+}
+
 function scanDocumentation(workDir: string, azaDir: string): string[] {
   const docs: string[] = [];
   const docNames = ['README.md', 'docs', 'api.md', 'architecture.md', 'deployment.md'];
@@ -220,36 +277,74 @@ function createRealMaker(opts?: RealHandlersOptions): MakerFn {
     //
     // V17: Before returning awaiting_agent, check for intermediate artifacts
     // so the work summary reflects what's already been done.
-    const stageActionMap: Record<string, string> = {
-      build: 'aza_task_implement',
-      verify: 'aza_quality_check',
-      archive: 'aza_doc_generate',
+    const stageActionMap: Record<string, { tool: string; host_action: string }> = {
+      design: { tool: 'aza_spec', host_action: 'design' },
+      build: { tool: 'aza_spec', host_action: 'implement' },
+      verify: { tool: 'aza_quality', host_action: 'check' },
+      archive: { tool: 'aza_finish', host_action: 'archive' },
     };
-    const action = stageActionMap[stage];
-    if (action) {
-      // V17: Scan for intermediate artifacts
-      let workDetail = `Awaiting LLM to execute ${action} for stage "${stage}"`;
-      if (stage === 'build') {
+    const mapped = stageActionMap[stage];
+    if (mapped) {
+      let workDetail = `Awaiting LLM to execute ${mapped.tool}(action=${mapped.host_action}) for stage "${stage}"`;
+      if (stage === 'design') {
+        const openspec = detectOpenSpecDesignReady(workDir);
+        const designMd = path.join(azaDir, 'design.md');
+        const hasAzaDesign = fs.existsSync(designMd) && fs.readFileSync(designMd, 'utf8').trim().length >= 80;
+        const diagDir = path.join(azaDir, 'diagrams');
+        let diagCount = 0;
+        try {
+          if (fs.existsSync(diagDir)) {
+            diagCount = fs.readdirSync(diagDir).filter((f) => /\.(md|mmd|puml|svg)$/.test(f)).length;
+          }
+        } catch {
+          /* ignore */
+        }
+        if (openspec.ready || (hasAzaDesign && diagCount >= 7)) {
+          return {
+            work: openspec.ready
+              ? `Design complete via OpenSpec change "${openspec.changeId}" (aza design.md ${hasAzaDesign ? 'present' : 'pending'})`
+              : `Design complete: design.md + ${diagCount} diagrams`,
+            tokensUsed: 200,
+          };
+        }
+        if (hasAzaDesign) {
+          workDetail = `design.md present (${diagCount}/7 diagrams; openspec=${openspec.ready}). Awaiting ${mapped.tool}(design).`;
+        }
+      } else if (stage === 'build') {
+        if (hasBuildCompleteMarker(azaDir) || detectOpenSpecTasksComplete(workDir)) {
+          return {
+            work: 'Build complete: OpenSpec tasks checked or build-complete.marker present',
+            tokensUsed: 200,
+          };
+        }
         const srcInfo = scanSourceFiles(workDir);
         if (srcInfo.count > 0) {
-          workDetail = `Existing source: ${srcInfo.count} files (${srcInfo.extensions.join(', ')}). Awaiting LLM to execute ${action} to implement remaining code.`;
+          workDetail = `Existing source: ${srcInfo.count} files. Awaiting ${mapped.tool}(implement).`;
         }
       } else if (stage === 'verify') {
+        if (fs.existsSync(path.join(azaDir, 'quality-passed.marker'))) {
+          return {
+            work: 'Verify complete: quality-passed.marker present',
+            tokensUsed: 200,
+          };
+        }
         const testInfo = scanTestResults(workDir);
         if (testInfo.hasTests) {
-          workDetail = `Existing tests found. Awaiting LLM to execute ${action} for quality verification.`;
+          workDetail = `Existing tests found. Awaiting ${mapped.tool}(check).`;
         }
       } else if (stage === 'archive') {
         const docs = scanDocumentation(workDir, azaDir);
         if (docs.length > 0) {
-          workDetail = `Existing docs: ${docs.join(', ')}. Awaiting LLM to execute ${action} for final documentation generation.`;
+          workDetail = `Existing docs: ${docs.join(', ')}. Awaiting ${mapped.tool}(archive).`;
         }
       }
       return {
         work: workDetail,
         tokensUsed: 100,
         status: 'awaiting_agent' as const,
-        action,
+        tool: mapped.tool,
+        host_action: mapped.host_action,
+        action: mapped.tool,
         stage,
       };
     }
@@ -271,7 +366,7 @@ function createRealChecker(opts?: RealHandlersOptions): CheckerFn {
     // V17: If the maker returned awaiting_agent (work starts with "Awaiting LLM"),
     // skip the actual checker verification — there is no real work to validate yet.
     // Return a neutral result so the gate doesn't falsely fail or pass.
-    if (_work.startsWith('Awaiting LLM')) {
+    if (_work.startsWith('Awaiting LLM') || _work.startsWith('Awaiting ')) {
       const neutral: PhaseGateInput = {};
       if (stage === 'build') {
         neutral.tdd_enforced = true;
@@ -315,8 +410,10 @@ function createRealChecker(opts?: RealHandlersOptions): CheckerFn {
       const diagCount = fs.existsSync(diagrams)
         ? fs.readdirSync(diagrams).filter(f => /\.(md|mmd|puml|svg)$/.test(f)).length
         : 0;
+      const openspec = detectOpenSpecDesignReady(workDir);
       input.diagrams_complete = diagCount;
-      input.design_review_passed = fs.existsSync(designMd);
+      input.openspec_design_ready = openspec.ready;
+      input.design_review_passed = fs.existsSync(designMd) || openspec.ready;
     } else if (stage === 'build') {
       // Check if tsc/vitest already cached for this workDir
       const tscCacheKey = `tsc:${workDir}`;
@@ -390,6 +487,18 @@ function createRealChecker(opts?: RealHandlersOptions): CheckerFn {
       if (acceptance) gates++;
       input.gates_passed = gates;
       input.security_optional_downgrade = !secretScan.ok;
+      // P1-3: wire SDD dual review into verify checker (persist + soft signal)
+      try {
+        const { evaluateDualVerdict, saveSDDReview } = await import('./sdd-review');
+        const dual = evaluateDualVerdict(input, _work);
+        await saveSDDReview(azaDir, stage, dual);
+        if (!dual.both_passed && gates >= 3) {
+          // Soft: don't zero gates, but leave a marker for audit
+          input.security_optional_downgrade = input.security_optional_downgrade || !dual.reviewer.passed;
+        }
+      } catch {
+        /* SDD review best-effort */
+      }
     } else if (stage === 'archive') {
       const docs = ['prd.md', 'architecture.md', 'data-model.md', 'api.md', 'test-plan.md', 'deployment.md'];
       const present = docs.filter(d => fs.existsSync(path.join(azaDir, d)) || fs.existsSync(path.join(workDir, d))).length;

@@ -72,6 +72,14 @@ npx @azaloop/cli setup
 
 #### Method 3: Portable Installer (No Node.js Required)
 
+From source (developers):
+
+```bash
+pnpm exec aza pack --install
+```
+
+Or download a release:
+
 **Windows:**
 ```powershell
 # Download and run the portable installer
@@ -127,6 +135,16 @@ npx @azaloop/cli setup
 
 #### 方式 3：便携安装包（无需 Node.js）
 
+从源码一键构建并安装（开发者）：
+
+```bash
+# 在 monorepo 根目录
+pnpm exec aza pack --install
+# 等价于 pnpm build:portable 后运行 dist/portable/install.ps1|install.sh
+```
+
+或从 GitHub Release 下载：
+
 **Windows:**
 ```powershell
 irm https://github.com/coeasy/azaloop/releases/latest/download/azaloop-portable.zip |
@@ -149,7 +167,7 @@ npm install -g @azaloop/cli @azaloop/mcp-server
 
 初始化完成后，在 AI 助手中输入需求，AzaLoop 将自动执行：
 ```
-aza_session_start → aza_prd_generate → 五阶段循环 → 完成交付
+aza_session(calibrate|continue) → aza_prd(review→approve) → aza_loop(full) ↔ aza_spec/aza_quality + report_tool → aza_finish(ship)
 ```
 
 ### 各客户端快速开始

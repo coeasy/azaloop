@@ -42,6 +42,48 @@ export type {
 export { PRDReviewGate } from './L1_spec/prd-review-gate';
 export type { PRDReviewResult, ApprovalResult } from './L1_spec/prd-review-gate';
 
+// L1 - GitHub competitive research (0.4.0)
+export {
+  researchCompetitors,
+  runCompetitiveResearch,
+  writeCompetitiveResearch,
+  writePrdMarkdown,
+  getCuratedCompetitorsSync,
+  buildCompetitiveAppendixSync,
+  DEFAULT_DIFFERENTIATORS,
+} from './L1_spec/github-competitive-research';
+export type {
+  CompetitorHit,
+  CompetitiveResearchResult,
+  CompetitorResearchMode,
+  RunCompetitiveResearchResult,
+} from './L1_spec/github-competitive-research';
+
+export { runMultiRolePrdReview } from './L1_spec/prd-multi-role-review';
+export type { ReviewRole, RoleFinding, MultiRoleReviewResult } from './L1_spec/prd-multi-role-review';
+
+export {
+  ensureConstitution,
+  readConstitution,
+  writeConstitution,
+  writePlanMd,
+  readPlanMd,
+  DEFAULT_CONSTITUTION,
+} from './L1_spec/constitution';
+
+export { listPresets, getPreset, applyPreset } from './L0_platform/presets';
+export type { AzaPreset } from './L0_platform/presets';
+
+export { runUiQa } from './L6_security/ui-qa';
+export type { UiQaResult, UiQaOptions } from './L6_security/ui-qa';
+
+export {
+  loadFederation,
+  registerFederationPeer,
+  syncFederationDigest,
+} from './L8_orchestrator/federation';
+export type { FederationManifest, FederationPeer } from './L8_orchestrator/federation';
+
 // L1 - Spec / Execution Contract (T17 / spec-superflow pattern)
 export {
   generateExecutionContract,
@@ -58,8 +100,9 @@ export {
   writeChangeFolder,
   archiveChange,
   listChanges,
+  CHANGE_FOLDER_FINGERPRINT,
 } from './L1_spec/change-folder';
-export type { ChangeInput, ChangeFolder, ChangeListEntry } from './L1_spec/change-folder';
+export type { ChangeInput, ChangeFolder, ChangeListEntry, ChangeTaskInput } from './L1_spec/change-folder';
 
 // L1 - Architecture Decision Records (v13 P2.1 / Trellis MADR pattern)
 export {
@@ -151,6 +194,34 @@ export type { JournalRecord } from './L2_memory/workspace-journal';
 // v14 — P9.1: auto journal entry helper
 export { autoAppendJournalEntry } from './L2_memory/workspace-journal';
 export {
+  ensureTaskBoard,
+  syncTaskBoardPhase,
+  appendProgress,
+  appendFinding,
+  isTaskPlanComplete,
+  computePlanSha,
+  readTaskBoardSummary,
+} from './L2_memory/task-board';
+export type { TaskBoardSnapshot, TaskBoardSummary } from './L2_memory/task-board';
+export {
+  createHNSWIndex,
+  createNSWIndex,
+  cosineSimilarity,
+  euclideanDistance,
+} from './L2_memory/hnsw-index';
+export type { HNSWIndex, NSWIndex, HNSWOptions, NSWOptions, SearchResult } from './L2_memory/hnsw-index';
+export {
+  ensureStores,
+  putStoreDoc,
+  getStoreDoc,
+  listStoreDocs,
+  deleteStoreDoc,
+  openVectorStore,
+  reindexStores,
+  embedText,
+} from './L2_memory/stores';
+export type { StoreKind, StoreDoc, StorePaths, VectorStore } from './L2_memory/stores';
+export {
   classifyTurn,
   generateCuratedManifest,
   saveCuratedManifest,
@@ -219,6 +290,16 @@ export { scanXSS } from './L6_security/scanners/xss';
 export { scanDependencies } from './L6_security/scanners/dependency';
 export { scanCodeInjection, securityScan } from './L6_security/scanners/code-injection';
 export type { SecurityFinding } from './L6_security/scanners/secret';
+export {
+  runShellwardGuard,
+  assertShellwardPreTool,
+  SHELLWARD_LAYERS,
+} from './L6_security/shellward-guard';
+export type {
+  ShellwardLayer,
+  ShellwardFinding,
+  ShellwardResult,
+} from './L6_security/shellward-guard';
 
 // L6 - Security: Prompt Injection Scanner
 export {
@@ -366,7 +447,7 @@ export {
 export type { DefaultHandlersOptions } from './L7_loop/default-handlers';
 export { createRealHandlerProvider } from './L7_loop/real-handlers';
 export type { RealHandlersOptions } from './L7_loop/real-handlers';
-export { OuterLoop, defaultTriage } from './L7_loop/outer-loop';
+export { OuterLoop, defaultTriage, createDefaultStoryProvider, createDefaultHumanGate, createDefaultCommit } from './L7_loop/outer-loop';
 export type {
   OuterLoopResult,
   OuterLoopOptions,
@@ -521,7 +602,14 @@ export type {
   SwarmCoordinatorConfig,
   SwarmDispatchResult,
   SwarmCollectResult,
+  SwarmHostInstruction,
 } from './L8_orchestrator/swarm/coordinator';
+export { WorktreeManager } from './L8_orchestrator/worktree/manager';
+export type {
+  WorktreeConfig,
+  WorktreeInfo,
+  WorktreeCreateResult,
+} from './L8_orchestrator/worktree/manager';
 // v14 — P8.2: ANTI_DRIFT defaults + enforcer (ruflo pattern)
 export {
   ANTI_DRIFT_DEFAULTS as L8_ANTI_DRIFT_DEFAULTS,
@@ -578,6 +666,7 @@ export { regressionGate } from './quality/gates/gate3-regression';
 export type { RegressionBaseline } from './quality/gates/gate3-regression';
 export { securityGate } from './quality/gates/gate4-security';
 export { acceptanceGate } from './quality/gates/gate5-acceptance';
+export { adrComplianceGate, GATE7_NAME } from './quality/gates/gate7-adr-compliance';
 export {
   LoopAuditGate,
   loopAuditGate,

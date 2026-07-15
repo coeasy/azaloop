@@ -96,18 +96,21 @@ function deriveConstraints(prd: PRD): string[] {
 }
 
 function deriveBehaviors(prd: PRD): string[] {
+  const vague = /^(.*?feature\s+\d+\s+)?works as expected[.!]?$/i;
   const out: string[] = [];
   for (const req of prd.functional_requirements ?? []) {
-    if (req.priority === 'P0') out.push(req.description);
+    if (req.priority === 'P0' && req.description && !vague.test(req.description.trim())) {
+      out.push(req.description);
+    }
   }
   for (const story of prd.stories ?? []) {
     if (story.priority === 'P0') {
       for (const ac of story.acceptance_criteria ?? []) {
-        if (ac.testable) out.push(ac.description);
+        const text = (ac.description || '').trim();
+        if (ac.testable && text && !vague.test(text)) out.push(text);
       }
     }
   }
-  // De-duplicate.
   return Array.from(new Set(out));
 }
 

@@ -5,6 +5,7 @@ export const NextActionSchema = z.object({
   action: z.string(),
   reason: z.string(),
   payload: z.record(z.unknown()).optional(),
+  instruction: z.string().optional(),
 });
 
 export const LoopResponseMetadataSchema = z.object({

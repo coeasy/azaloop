@@ -68,8 +68,8 @@ describe('V17 Client Template Consistency', () => {
       const content = fs.readFileSync(continuePath, 'utf8');
       // Core clients must reference the shared template
       expect(content).toMatch(/共享模板|_shared/);
-      // Must have aza_auto_loop tool reference
-      expect(content).toMatch(/aza_auto_loop/);
+      // Must have aza_loop (or legacy aza_auto_loop) tool reference
+      expect(content).toMatch(/aza_loop|aza_auto_loop/);
       // Must have MCP config section
       expect(content).toMatch(/MCP|mcp\.json/);
     });
@@ -106,12 +106,10 @@ describe('V17 Client Template Consistency', () => {
       const content = fs.readFileSync(sharedPath, 'utf8');
       // Must have V16 or V17 marker
       expect(content).toMatch(/V1[67]/);
-      // Must describe single-stage scheduling
-      expect(content).toMatch(/单阶段调度|single.?stage/i);
-      // Must describe background scheduler
-      expect(content).toMatch(/后台|background|scheduler/i);
-      // Must have aza_auto_loop tool reference
-      expect(content).toMatch(/aza_auto_loop/);
+      // Must describe cooperative full loop / awaitingAction
+      expect(content).toMatch(/awaitingAction|report_tool|full/i);
+      // Must have aza_loop (converged) or legacy aza_auto_loop reference
+      expect(content).toMatch(/aza_loop|aza_auto_loop/);
       // Must have awaiting_agent or tool awaiting concept
       expect(content).toMatch(/awaiting|等待|工具.*执行/i);
       // Must have report_tool or tool execution reporting

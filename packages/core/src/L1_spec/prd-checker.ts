@@ -121,15 +121,29 @@ export class PRDChecker {
     const p1Count = details.filter(d => d.severity === 'P1' && !d.passed).length;
     const p2Count = details.filter(d => d.severity === 'P2' && !d.passed).length;
     const p3Count = details.filter(d => d.severity === 'P3' && !d.passed).length;
-    const passed = criticalIssues === 0;
     const passedChecks = details.filter(d => d.passed).length;
+
+    // Weighted score — P0/P1 dominate; optional P3 polish cannot inflate/deflate pass alone
+    const weight = (sev: string) => (sev === 'P0' ? 4 : sev === 'P1' ? 2 : sev === 'P2' ? 1 : 0.5);
+    let earned = 0;
+    let possible = 0;
+    for (const d of details) {
+      const w = weight(d.severity);
+      possible += w;
+      if (d.passed) earned += w;
+    }
+    const score = Math.round((earned / Math.max(possible, 1)) * 100);
+
+    // Strict gate: all P0+P1 clear AND weighted score ≥ 90 (P0/P1 weight more)
+    const MIN_PASS_SCORE = 90;
+    const passed = p0Count === 0 && p1Count === 0 && score >= MIN_PASS_SCORE;
 
     // Build dimension scores
     const dimensionScores = this.buildDimensionScores(details);
 
     return {
       passed,
-      score: Math.round((passedChecks / details.length) * 100),
+      score,
       total_checks: details.length,
       passed_checks: passedChecks,
       critical_issues: criticalIssues,
@@ -196,10 +210,10 @@ export class PRDChecker {
       id: 'OV-001',
       category: 'overview',
       dimension: 'document_structure',
-      description: 'PRD overview should be at least 50 characters',
-      severity: 'P1',
-      passed: prd.overview.length >= 50,
-      suggestion: prd.overview.length < 50 ? 'Expand the overview with more detail' : undefined,
+      description: 'PRD overview should be at least 120 characters with substantive context',
+      severity: 'P0',
+      passed: prd.overview.length >= 120,
+      suggestion: prd.overview.length < 120 ? 'Expand overview with problem, users, and value props (≥120 chars)' : undefined,
     }];
   }
 
@@ -296,12 +310,50 @@ export class PRDChecker {
       category: 'acceptance_criteria',
       dimension: 'mvp_strategy',
       description: 'All acceptance criteria should be testable',
-      severity: 'P1',
-      passed: untestable === 0,
+      severity: 'P0',
+      passed: totalAcs > 0 && untestable === 0,
       suggestion: untestable > 0 ? `Found ${untestable} untestable criteria — make them measurable` : undefined,
     });
 
+    details.push({
+      id: 'AC-003',
+      category: 'acceptance_criteria',
+      dimension: 'mvp_strategy',
+      description: 'Each story should have at least one acceptance criterion',
+      severity: 'P0',
+      passed: prd.stories.length === 0 || prd.stories.every(s => (s.acceptance_criteria?.length ?? 0) >= 1),
+      suggestion: 'Attach ≥1 acceptance criterion per story',
+    });
+
+    const vagueAcs = [...prd.acceptance_criteria, ...allAcs].filter((a) => this.isVagueAcceptance(a?.description));
+    details.push({
+      id: 'AC-004',
+      category: 'acceptance_criteria',
+      dimension: 'mvp_strategy',
+      description: 'Acceptance criteria must be measurable (reject vague placeholders)',
+      severity: 'P0',
+      passed: totalAcs > 0 && vagueAcs.length === 0,
+      suggestion:
+        vagueAcs.length > 0
+          ? `Rewrite ${vagueAcs.length} vague AC(s) with observable assertions (command/output/metric)`
+          : undefined,
+    });
+
     return details;
+  }
+
+  /** True only for hollow placeholders — not for ACs that ban/mention those phrases. */
+  private isVagueAcceptance(description?: string): boolean {
+    const t = (description || '').trim();
+    if (t.length < 16) return true;
+    if (/拒绝|reject|禁止|不得|must not|no\s+vague|forbid/i.test(t)) return false;
+    if (/assert|via automated|observable|checklist|pass\/fail|metric|command|验证|断言/i.test(t)) {
+      // Measurable wrapper present — only fail if the whole body is still a pure placeholder
+      return /^(.*?feature\s+\d+\s+)?works as expected[.!]?$/i.test(t)
+        || /^as described[.!]?$/i.test(t)
+        || /^按预期(工作|运行)?[.!]?$/u.test(t);
+    }
+    return /works as expected|as described|feature\s+\d+|按预期|正确工作|基本可用|正常运行/i.test(t);
   }
 
   private checkArchitecture(prd: PRD): PRDCheckDetail[] {
@@ -350,15 +402,47 @@ export class PRDChecker {
    * 1. 业务调研 — Check if business research context is present.
    */
   private checkBusinessResearch(prd: PRD): PRDCheckDetail[] {
-    return [{
-      id: 'BR-001',
-      category: 'business_research',
-      dimension: 'business_research',
-      description: 'PRD should include business background (industry analysis, pain points)',
-      severity: 'P1',
-      passed: prd.overview.length >= 100 && /pain|痛点|问题|problem|background|背景|行业/i.test(prd.overview),
-      suggestion: 'Add industry analysis and pain point description to the overview',
-    }];
+    const text = prd.overview + '\n' + prd.goals.join('\n');
+    const hasPain = /pain|痛点|问题|problem|background|背景|行业|competitor|竞品|landscape/i.test(text);
+    return [
+      {
+        id: 'BR-001',
+        category: 'business_research',
+        dimension: 'business_research',
+        description: 'PRD should include business background (industry analysis, pain points)',
+        severity: 'P0',
+        passed: prd.overview.length >= 120 && hasPain,
+        suggestion: 'Add industry analysis, pain points, and competitor context to the overview',
+      },
+      {
+        id: 'BR-002',
+        category: 'business_research',
+        dimension: 'business_research',
+        description: 'PRD should reference competitive / similar projects',
+        severity: 'P0',
+        passed: /competitor|竞品|github\.com\/|OpenSpec|superpowers|ralphy|Trellis|landscape/i.test(text),
+        suggestion: 'Run competitive research and cite at least one similar project or GitHub repo',
+      },
+      {
+        id: 'BR-003',
+        category: 'business_research',
+        dimension: 'business_research',
+        description: 'PRD must cite at least 2 external GitHub repository URLs',
+        severity: 'P0',
+        passed: (text.match(/https?:\/\/github\.com\/[\w.-]+\/[\w.-]+/gi) || []).length >= 2,
+        suggestion: 'Include ≥2 github.com/owner/repo links from competitive research',
+      },
+      {
+        id: 'BR-004',
+        category: 'business_research',
+        dimension: 'business_research',
+        description: 'PRD should include non-empty differentiators vs competitors',
+        severity: 'P0',
+        passed: /differentiat|壁垒|Host-LLM|8 unified MCP|Completion|circuit gate/i.test(text) &&
+          (prd.goals?.length || 0) >= 2,
+        suggestion: 'Add differentiation bullets and ≥2 goals from competitive supplements',
+      },
+    ];
   }
 
   /**
@@ -513,15 +597,19 @@ export class PRDChecker {
    * 10. 商业分析 — Check if business analysis is present.
    */
   private checkBusinessAnalysis(prd: PRD): PRDCheckDetail[] {
-    const hasRevenueHints = /revenue|monetiz|subscription|pricing|盈利|订阅|付费|商业/i.test(prd.overview + prd.goals.join(' '));
+    const blob = prd.overview + prd.goals.join(' ');
+    const hasRevenueHints =
+      /revenue|monetiz|subscription|pricing|盈利|订阅|付费|商业|differentiat|差异|竞品|competit|peers|OpenSpec|ralphy|superpowers/i.test(
+        blob,
+      );
     return [{
       id: 'BA-001',
       category: 'business_analysis',
       dimension: 'business_analysis',
-      description: 'PRD should include commercial analysis (revenue model, market positioning)',
-      severity: 'P3',
-      passed: hasRevenueHints || prd.goals.length >= 2,
-      suggestion: 'Add revenue model and market positioning to the PRD',
+      description: 'PRD should include commercial or competitive analysis (positioning vs alternatives)',
+      severity: 'P1',
+      passed: hasRevenueHints && prd.goals.length >= 2,
+      suggestion: 'Add positioning vs competitors and at least two measurable goals',
     }];
   }
 

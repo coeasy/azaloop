@@ -114,7 +114,7 @@ export async function handleAudit(workspacePath?: string): Promise<LoopResponse>
       },
       next_action:
         result.score >= 80
-          ? { tool: 'aza_loop_next', action: 'next', reason: `Audit level ${result.level} — autonomous loop ready` }
+          ? { tool: 'aza_loop', action: 'next', reason: `Audit level ${result.level} — autonomous loop ready` }
           : { tool: 'aza_audit', action: 'fix', reason: `Audit level ${result.level} (score ${result.score}) — address recommendations before autonomous run` },
       metadata: { iteration: 0, progress: `${result.score}%`, stage: 'audit' },
     };

@@ -45,7 +45,7 @@ export function classifyTurn(
       turnType: 'complex',
       complexity: 'high',
       requiresConsent: true,
-      recommendedTools: ['aza_task_design', 'aza_dag', 'aza_loop_next'],
+      recommendedTools: ['aza_spec', 'aza_loop'],
       estimatedTokens: 10000,
       description: 'Complex request detected — multi-file or architectural change. Full workflow with consent gate.',
     };
@@ -57,7 +57,7 @@ export function classifyTurn(
       turnType: 'task',
       complexity: 'medium',
       requiresConsent: currentStage === 'open' || currentStage === 'design',
-      recommendedTools: ['aza_task_implement', 'aza_quality_check', 'aza_loop_next'],
+      recommendedTools: ['aza_spec', 'aza_quality', 'aza_loop'],
       estimatedTokens: 3000,
       description: 'Task request — implementation or fix. Standard workflow.',
     };
@@ -69,7 +69,7 @@ export function classifyTurn(
       turnType: 'research',
       complexity: 'low',
       requiresConsent: false,
-      recommendedTools: ['aza_memory_query', 'aza_prd_validate', 'aza_security_scan'],
+      recommendedTools: ['aza_memory', 'aza_prd', 'aza_quality'],
       estimatedTokens: 1000,
       description: 'Research request — investigation or analysis. Inline workflow.',
     };

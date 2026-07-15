@@ -12,7 +12,7 @@
 
 import type { GateResult } from '../pipeline';
 import {
-  scanAdrCompliance,
+  scanAdrComplianceFromDisk,
   type ComplianceResult,
   type AdrViolation,
 } from '../../L6_security/scanners/adr-compliance';
@@ -88,9 +88,6 @@ function scanAdrComplianceFromDiskSafe(
   filePaths: string[],
   workspaceRoot?: string,
 ): ComplianceResult {
-  // Lazy import to avoid a circular dep at module init.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { scanAdrComplianceFromDisk } = require('../../L6_security/scanners/adr-compliance');
   try {
     return scanAdrComplianceFromDisk(azaDir, filePaths, workspaceRoot);
   } catch (err) {

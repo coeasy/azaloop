@@ -49,17 +49,42 @@ async function bundleWithEsbuild(entry: string, outfile: string): Promise<void> 
     minify: true,
     treeShaking: true,
     sourcemap: false,
+    // Bundle everything (including js-yaml). A Node SEA executable cannot
+    // resolve external `require()`s at runtime — leaving js-yaml external
+    // throws ERR_UNKNOWN_BUILTIN_MODULE when the embedded blob loads.
     external: [],
     define: {
       'process.env.AZALOOP_BUNDLED': '"true"',
     },
-    banner: {
-      js: '#!/usr/bin/env node\n',
-    },
+    // No shebang banner. The bundle is embedded into a Node SEA executable,
+    // whose CJS loader (embedderRunCjs) does NOT strip a leading
+    // `#!/usr/bin/env node` and would throw `SyntaxError: Invalid or
+    // unexpected token`. We prepend the shebang only on the JS-bundle
+    // fallback path (see main()).
   });
 }
 
+/** Remove a leading hashbang (`#!...`) if present (in place). */
+async function stripShebangFile(file: string): Promise<void> {
+  const content = await fs.readFile(file, 'utf8');
+  if (!content.startsWith('#!')) return;
+  const nl = content.indexOf('\n');
+  const stripped = nl === -1 ? '' : content.slice(nl + 1);
+  await fs.writeFile(file, stripped, 'utf8');
+}
+
+/** Copy a bundle to a fallback JS executable, ensuring a leading shebang. */
+async function writeFallbackExecutable(dest: string, src: string): Promise<void> {
+  const content = await fs.readFile(src, 'utf8');
+  const prefixed = content.startsWith('#!') ? content : `#!/usr/bin/env node\n${content}`;
+  await fs.writeFile(dest, prefixed, 'utf8');
+}
+
 async function createSeaExecutable(jsFile: string, outputName: string): Promise<void> {
+  // SEA's embedded CJS loader does not strip a leading shebang; ensure the
+  // bundle is clean before it becomes the SEA blob main module.
+  await stripShebangFile(jsFile);
+
   const seaConfig = {
     main: jsFile,
     output: path.join(DIST, 'sea-prep.blob'),
@@ -83,8 +108,10 @@ async function createSeaExecutable(jsFile: string, outputName: string): Promise<
   console.log(`  Copying Node.js runtime → ${path.basename(outBin)} ...`);
   await fs.copyFile(nodeBin, outBin);
 
-  // Inject SEA blob
-  const postject = path.join(ROOT, 'node_modules', '.bin', 'postject');
+  // Inject SEA blob (use npx so Windows resolves .cmd shims correctly)
+  const postjectCmd = process.platform === 'win32'
+    ? `npx --yes postject`
+    : path.join(ROOT, 'node_modules', '.bin', 'postject');
   const postjectArgs = [
     `"${outBin}"`,
     'NODE_SEA_BLOB',
@@ -96,8 +123,8 @@ async function createSeaExecutable(jsFile: string, outputName: string): Promise<
   try {
     console.log(`  Injecting SEA blob into ${path.basename(outBin)} ...`);
     execSync(
-      `${postject} ${postjectArgs.join(' ')}`,
-      { stdio: 'pipe', timeout: 30000 }
+      `${postjectCmd} ${postjectArgs.join(' ')}`,
+      { cwd: ROOT, stdio: 'pipe', timeout: 60000, shell: true as any },
     );
     console.log(`  ✓ ${outputName} executable created`);
   } catch (e: any) {
@@ -162,7 +189,8 @@ Write-Host "  [1/4] Detecting platform..."
 Write-Host "    OS: Windows"
 Write-Host "    Target: $TARGET_DIR"
 
-Write-Host "`n  [2/4] Installing AzaLoop..."
+Write-Host ""
+Write-Host "  [2/4] Installing AzaLoop..."
 if (-not (Test-Path $TARGET_DIR)) {
   New-Item -ItemType Directory -Path $TARGET_DIR -Force | Out-Null
 }
@@ -180,7 +208,8 @@ if ($userPath -notlike "*$TARGET_DIR*") {
   Write-Host "    ✓ Added to PATH"
 }
 
-Write-Host "`n  [3/4] Initializing project..."
+Write-Host ""
+Write-Host "  [3/4] Initializing project..."
 & "$TARGET_DIR\\aza.exe" init
 
 Write-Host @"
@@ -309,14 +338,15 @@ async function main() {
   await createSeaExecutable(cliBundle, 'aza');
   await createSeaExecutable(mcpBundle, 'azaloop-mcp');
 
-  // If SEA failed, fall back to portable JS bundles
+  // If SEA failed, fall back to portable JS bundles (with shebang so they
+  // can be executed directly by Node).
   const isWin = process.platform === 'win32';
   const azaExe = path.join(DIST, isWin ? 'aza.exe' : 'aza');
   const mcpExe = path.join(DIST, isWin ? 'azaloop-mcp.exe' : 'azaloop-mcp');
   if (!fs.stat(azaExe).catch(() => false)) {
     console.log('  Using portable JS bundles (no native executable)');
-    await fs.copyFile(cliBundle, azaExe);
-    await fs.copyFile(mcpBundle, mcpExe);
+    await writeFallbackExecutable(azaExe, cliBundle);
+    await writeFallbackExecutable(mcpExe, mcpBundle);
   }
 
   // Step 5: Copy assets and create installers

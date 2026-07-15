@@ -1,54 +1,82 @@
----
-description: AzaLoop 0.1.0 development rules
-globs: "**/*"
-alwaysApply: true
----
+<!-- V17 — 共享规则：所有客户端 `aza setup` / rules 生成器的唯一真相源 -->
+# AzaLoop — OpenCode 全自动协议（V17 · 8 工具）
 
-# AzaLoop 0.1.0 — 开发循环规则（OpenCode）
+你在 **OpenCode**（T1）中运行 AzaLoop。
 
-你在 OpenCode 中运行 **AzaLoop 0.1.0**（PRD 驱动的自主开发循环引擎）。
-宿主 LLM 优先：AzaLoop 通过 MCP Server 提供工具，你（宿主模型）负责实际编码。
+## 唯一工具面（必须使用）
 
-## 全自动循环（MANDATORY）
+`aza_session` · `aza_prd` · `aza_loop` · `aza_spec` · `aza_quality` · `aza_finish` · `aza_memory` · `aza_meta`
 
-1. 会话启动先调用 `aza_session_start` 初始化系统（创建 .aza 目录、STATE.yaml、审计日志）。
-2. 再调用 `aza_context calibrate` 获取上下文 + 状态。
-3. 若存在 `.aza/RESUME.md`：调用 `aza_loop next` 续跑（传入 RESUME 中的 `current_story`）。
-4. 若不存在 RESUME.md：询问用户需求 → 调用 `aza_prd generate` 生成 PRD。
-5. **每次工具返回的 `next_action` 必须自动执行，不得跳过**（这是全自动循环生效的关键）。
-6. 跨会话恢复时调用 `aza_memory query` 获取历史经验。
+遗留名（`aza_task_*` / `aza_context_*` / `aza_auto_loop` / `aza_loop_next`）仅作别名；**主链路禁止以别名作为目标指令**。
 
-## 五阶段流水线（open → design → build → verify → archive）
+## 硬规则
 
-- **open**：生成 PRD（`aza_prd generate`），`aza_prd validate` 自检，P0 问题 = 0 才通过。
-- **design**：拆解 Story、生成架构图（`aza_task design`）。
-- **build**：**TDD 铁律**——先写失败测试再写实现（`aza_task implement`）。
-- **verify**：五级门禁（tsc / vitest / 回归 / 安全 / 验收），`aza_quality check`。
-- **archive**：生成 6 类文档并记忆沉淀（`aza_doc generate`）。
+1. **立刻执行 `next_action`**（`wait` / `escalate` / `done` 除外），禁止向用户索要 Continue。
+2. 若返回 `data.awaitingAction`：先执行该工具，再 `aza_loop(action=report_tool, tool_name=…)`。
+3. 新需求必须走 **PRD 先行**，再进循环。
+4. 不要停下来问「是否继续？」。
 
-## 禁止
+## 会话启动
 
-- 不得跳过 `next_action` 链（那会打破全自动循环）。
-- 不得在测试通过前宣称完成（Completion Gate 会阻止假完成）。
-- 不得引入模拟流程：所有质量门禁必须运行真实工具（tsc / vitest / 扫描）。
+1. `aza_session(action=continue)`；若无 RESUME 则 `calibrate`
+2. 跟随返回的 `next_action`
 
-## V17 后台自动循环（推荐）
+## PRD 先行
 
-用户确认 PRD 后，使用 `aza_auto_loop` 工具自动执行整个循环：
+1. `aza_prd(action=review, title, description)` — approve 默认写 OpenSpec
+2. 用户确认 → `aza_prd(action=approve)`；或 **`auto_approve=true` / `AZA_AUTO_APPROVE_PRD=true`** 无人值守
+3. 批准后：`aza_loop(action=full)`
 
-1. **后台自动循环**（推荐）：调用 `aza_auto_loop`（action="auto"）启动后台调度器
-   - 调度器自动调用 `loopController.next()` 推进循环
-   - 当需要 LLM 执行工具时（如 `aza_task_implement`），调度器自动暂停
-   - LLM 执行完工具后，调用 `aza_auto_loop`（action="report_tool", tool_name="..."）通知调度器继续
-   - 重复直到完成
-2. **单步模式**：调用 `aza_auto_loop`（action="step"）执行一步，返回 `next_action` 和 `awaitingAction`
-3. **全自动模式**：调用 `aza_auto_loop`（action="full"）执行完整循环直到完成
-
-## 工具调用链（主体链路）
+## 自动循环
 
 ```
-aza_context_calibrate → aza_prd_review → aza_prd_approve → aza_auto_loop(auto) →
-  [调度器自动调用] aza_loop_next → aza_task_design → aza_loop_next →
-  aza_task_implement → aza_loop_next → aza_quality_check →
-  aza_loop_next → aza_doc_generate → done
+aza_loop(full)
+→ awaitingAction → aza_spec / aza_quality
+→ aza_loop(report_tool)
+→ … 直到 → aza_finish(ship)
 ```
+
+## 五阶段
+
+open → design → build → verify → archive。阶段推进只跟随 `next_action` / `aza_loop(full)`，禁止 Agent 自行跳阶段。
+
+## 质量与交付
+
+- verify：`aza_quality(action=check)`（Gate1–7）
+- 收工：`aza_finish(action=ship)`
+
+# Phase Guard（硬规则，违反即停止）
+
+> 本片段由 `aza setup --client <name>` 注入。阶段推进跟随 MCP `next_action`。
+
+## 阶段定义
+
+```
+open → design → build → verify → archive → done
+```
+
+每个阶段只允许执行该阶段允许的统一工具。跳阶段必须经 `aza_loop(action=full|next)` / `report_tool` 推进，**禁止 Agent 自行判断下一阶段**。
+
+## 写入规则（硬拦截）
+
+| 阶段 | 允许写入 | 禁止写入 |
+|---|---|---|
+| **open** | `prd.md`、`prd.json`、`.aza/`、`openspec/**` | `src/**`、`tests/**`（除探测） |
+| **design** | `design.md`、`tasks.md`、`openspec/**`、`.aza/` | `src/**`、锁定后的 `prd.json` |
+| **build** | `src/**`、`tests/**`、`.aza/` | 锁定后的 PRD/design 主文档 |
+| **verify** | `tests/**`、`.aza/` | 无关大范围 `src/**` 改动 |
+| **archive** | `docs/**`、`.aza/`、CHANGELOG | 锁定实现 |
+
+## 决策点前置条件（Red Flags）
+
+| 工具调用 | 必须先完成 | Red Flag |
+|---|---|---|
+| `aza_spec(design\|implement)` | `aza_prd(approve)` | RF-1 |
+| `aza_finish(ship)` | `aza_quality(check)` 通过 | RF-2 |
+
+## 违规处理
+
+1. **首次**：返回失败 + `next_action` 引导回正确工具
+2. **Red Flag**：记录 strike
+3. **3 次 strike**：强制回 design
+4. **PRD/contract drift**：强制回 open

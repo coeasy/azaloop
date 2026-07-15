@@ -177,7 +177,7 @@ describe('AzaLoop 0.1.0 Integration', () => {
       expect(result.success).toBe(true);
       expect(result.next_action).toBeDefined();
       expect(result.next_action!.action).toBe('refine');
-      expect(result.next_action!.tool).toBe('aza_prd_generate');
+      expect(result.next_action!.tool).toBe('aza_prd');
 
       // Set the prd_valid condition and try again — gate passes, advances to design
       lc.setCondition('prd_valid', true);
@@ -185,7 +185,7 @@ describe('AzaLoop 0.1.0 Integration', () => {
       expect(result.success).toBe(true);
       expect(result.next_action).toBeDefined();
       expect(result.next_action!.action).toBe('design');
-      expect(result.next_action!.tool).toBe('aza_task_design');
+      expect(result.next_action!.tool).toBe('aza_spec');
       expect(lc.stateMachine.getCurrentStage()).toBe('design');
     });
 
@@ -200,7 +200,7 @@ describe('AzaLoop 0.1.0 Integration', () => {
       // Set condition and advance
       lc.setCondition('prd_valid', true);
       result = await lc.next();
-      expect(result.next_action!.tool).toBe('aza_task_design');
+      expect(result.next_action!.tool).toBe('aza_spec');
       expect(result.next_action!.action).toBe('design');
       expect(lc.stateMachine.getCurrentStage()).toBe('design');
 
@@ -213,7 +213,7 @@ describe('AzaLoop 0.1.0 Integration', () => {
       // Set design condition and advance
       lc.setCondition('stories_designed', true);
       result = await lc.next();
-      expect(result.next_action!.tool).toBe('aza_task_implement');
+      expect(result.next_action!.tool).toBe('aza_spec');
       expect(result.next_action!.action).toBe('implement');
       expect(lc.stateMachine.getCurrentStage()).toBe('build');
 
@@ -221,7 +221,7 @@ describe('AzaLoop 0.1.0 Integration', () => {
       lc.stateMachine.setStageStatus('build', 'in_progress');
       result = await lc.next();
       expect(result.next_action!.action).toBe('implement');
-      expect(result.next_action!.tool).toBe('aza_task_implement');
+      expect(result.next_action!.tool).toBe('aza_spec');
     });
 
     it('LoopController: completeStage respects quality gate', () => {
@@ -370,7 +370,7 @@ describe('AzaLoop 0.1.0 Integration', () => {
       expect(bundle.constitution.length).toBeGreaterThan(0);
       expect(bundle.iron_rules.length).toBeGreaterThan(0);
       expect(bundle.anti_rationalizations.length).toBeGreaterThan(0);
-      expect(bundle.session_prompt).toContain('aza_context status');
+      expect(bundle.session_prompt).toContain('aza_session');
     });
   });
 

@@ -187,8 +187,9 @@ describe('V15 AutoLoopDriver — runFull()', () => {
 
     await driver.runFull();
 
-    // Either onComplete or onEscalate should have been called
-    expect(completed || escalated).toBe(true);
+    // 0.2.x: runFull pauses on awaitingAction instead of spinning to completion
+    const paused = driver.getStatus() === 'paused';
+    expect(completed || escalated || paused).toBe(true);
   });
 });
 

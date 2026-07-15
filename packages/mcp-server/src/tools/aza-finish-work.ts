@@ -174,6 +174,19 @@ export async function handleFinishWork(
     errors.push(`Failed to update STATUS.md: ${(err as Error).message}`);
   }
 
+  // 6b) Task board + stop-hook signal for CompletionGate
+  try {
+    const { ensureTaskBoard } = await import('@azaloop/core');
+    ensureTaskBoard(azaDir, {
+      title: input.work_summary ?? taskId,
+      phase: 'archive',
+      status: 'complete',
+      notes: 'finish_work completed',
+    });
+  } catch {
+    /* best-effort */
+  }
+
   // 7) Optional: signal stop by advancing to the 'archive' stage.
   let loopStopped = false;
   if (input.stop_loop !== false && stateManager) {

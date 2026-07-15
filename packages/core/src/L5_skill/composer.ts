@@ -1,3 +1,9 @@
+/**
+ * SkillComposer — compose multiple skills into a chain.
+ *
+ * @status integrated — exposed via aza_meta(skills_compose) when available;
+ * otherwise usable by host code importing from @azaloop/core.
+ */
 import { SkillRegistry, type SkillMeta } from './registry';
 
 export interface ComposedSkill {

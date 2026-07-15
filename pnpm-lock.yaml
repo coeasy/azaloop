@@ -29,6 +29,9 @@ importers:
       commander:
         specifier: ^12.1.0
         version: 12.1.0
+      js-yaml:
+        specifier: ^4.1.0
+        version: 4.3.0
     devDependencies:
       '@types/node':
         specifier: ^20.14.0

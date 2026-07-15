@@ -20,6 +20,7 @@ import * as fs from 'fs';
 import type { LoopResponse, NextAction } from '@azaloop/shared';
 import type { AzaloopConfig } from '@azaloop/shared';
 import * as path from 'path';
+import { TokenBudget, type BudgetAction } from './token-budget';
 
 export interface LoopControllerOptions {
   maxIterations?: number;
@@ -40,6 +41,8 @@ export interface LoopControllerOptions {
   contextBundle?: ContextEntryBundle | null;
   /** Knowledge entries from InjectionEngine — used by real handlers for stage knowledge */
   knowledgeEntries?: string[];
+  /** V20 Task 4: Token budget hard cap (per-task & per-session limits) */
+  tokenBudget?: TokenBudget;
 }
 
 /**
@@ -85,8 +88,8 @@ export class LoopController {
   private contextOrchestrator: ContextOrchestrator | null = null;
   /** Injection engine — stage-specific knowledge injection */
   private injectionEngine: InjectionEngine;
-  /** Unified token budget for context pruning (from config or default 4000) */
-  private tokenBudget: number = 4000;
+  /** V20 Task 4: Token budget hard cap (per-task & per-session limits) */
+  private tokenBudget: TokenBudget;
   /** Resume generator for run-ledger access */
   private resumeGen: ResumeGenerator | null = null;
   /** Cache for checker results within a single next() cycle */
@@ -128,6 +131,8 @@ export class LoopController {
         loop: { max_iterations: 50, deadlock_threshold: 3, hard_stop_on_security: true },
         memory: { enabled: true, episodic_max: 100, compression_threshold: 50 },
         quality: { gates: { lint: true, test: true, regression: true, security: true, acceptance: true } },
+        rules: [],
+        boundaries: { never_touch: [] },
         mcp_servers: [],
       };
     }
@@ -201,18 +206,15 @@ export class LoopController {
       this.auditLog = new AuditLog(this.configLoopOptions.azaDir);
     }
 
+    // V20 Task 4: Initialize TokenBudget (hard cap on per-task & per-session usage)
+    this.tokenBudget = options.tokenBudget ?? new TokenBudget('L2');
+
     // V12: Initialize ContextOrchestrator for per-stage JSONL context injection
     if (this.configLoopOptions.azaDir) {
-      this.contextOrchestrator = new ContextOrchestrator(this.configLoopOptions.azaDir);
+      this.contextOrchestrator = new ContextOrchestrator(this.configLoopOptions.azaDir, this.tokenBudget);
     }
     // V12: Initialize InjectionEngine for stage-specific knowledge
     this.injectionEngine = new InjectionEngine();
-
-    // V12: Wire token budget from config (loop.token_budget or default 4000)
-    const configTokenBudget = (effectiveConfig as any).loop?.token_budget;
-    if (typeof configTokenBudget === 'number' && configTokenBudget > 0) {
-      this.tokenBudget = configTokenBudget;
-    }
 
     // Initialize ResumeGenerator for run-ledger access
     if (this.configLoopOptions.azaDir) {
@@ -358,7 +360,22 @@ export class LoopController {
     if (!this.stateManager) return;
     try {
       const fileState = await this.stateManager.load();
-      const stage = fileState.pipeline.current_stage as Stage;
+      let stage = fileState.pipeline.current_stage as Stage;
+      // Heal drift: blocked/in_progress stage wins over stale pipeline.current_stage
+      const stages = fileState.pipeline.stages as Record<Stage, any>;
+      const order: Stage[] = ['open', 'design', 'build', 'verify', 'archive'];
+      for (const s of order) {
+        if (stages[s]?.status === 'blocked') { stage = s; break; }
+      }
+      if (stage === fileState.pipeline.current_stage) {
+        for (const s of order) {
+          if (stages[s]?.status === 'in_progress') { stage = s; break; }
+        }
+      }
+      const phaseCurrent = (fileState.loops as any)?.phase?.current as Stage | undefined;
+      if (stage === fileState.pipeline.current_stage && phaseCurrent && stages[phaseCurrent]?.status !== 'completed') {
+        stage = phaseCurrent;
+      }
       // Mutate in place — do NOT reassign — so InnerLoop/OuterLoop keep
       // observing the same shared StateMachine instance.
       this.stateMachine.loadState({
@@ -422,6 +439,8 @@ export class LoopController {
     if (!this.stateManager) return;
     const memState = this.stateMachine.getState();
     const currentState = this.stateManager.getState();
+    // Cap progress when blocked / incomplete archive
+    const progress = this.stateMachine.getProgress();
     await this.stateManager.update({
       pipeline: {
         current_stage: memState.current_stage,
@@ -430,8 +449,8 @@ export class LoopController {
       loops: memState.loops as any,
       loop: {
         iteration: memState.iteration,
-        progress: memState.progress,
-        current_story: memState.loops.inner.current_story,
+        progress,
+        current_story: memState.loops.inner.current_story || currentState.loop.current_story,
         client: currentState.loop.client,
         model: currentState.loop.model,
         max_iterations: currentState.loop.max_iterations,
@@ -439,11 +458,12 @@ export class LoopController {
       attestation: memState.attestation,
       strikes: currentState.strikes,
     });
-    // V17: Auto-generate RESUME.md after state sync
+    // V17: Auto-generate RESUME.md after state sync — STATE-driven next_action
     if (this.resumeGen && this.stateManager) {
+      const entry = this.getStageEntryAction(memState.current_stage);
       await this.resumeGen.generate(this.stateManager, {
-        next_tool: 'aza_loop_next',
-        next_action: `continue_${memState.current_stage}`,
+        next_tool: entry.tool,
+        next_action: entry.action,
         last_milestone: new Date().toISOString(),
       }).catch(() => {
         // best-effort: RESUME.md generation failure is non-fatal
@@ -471,8 +491,15 @@ export class LoopController {
     // V12: Sync state from file at the start of each cycle
     await this.syncStateFromFile();
 
-    // If OuterLoop is enabled and has callbacks, use OuterLoop
-    if (this.configLoopOptions.enableOuterLoop && this.outerLoop && this.outerLoopCallbacks) {
+    // If OuterLoop is enabled with explicit driver env, use OuterLoop batch path.
+    // Default MCP path stays on nextV12 (cooperative awaitingAction) and advances
+    // the outer board when a story completes.
+    if (
+      this.configLoopOptions.enableOuterLoop &&
+      this.outerLoop &&
+      this.outerLoopCallbacks &&
+      process.env.AZA_OUTER_LOOP_DRIVER === 'true'
+    ) {
       const outerResult = await this.runOuterLoop();
       return this.buildOuterLoopResponse(outerResult);
     }
@@ -481,9 +508,89 @@ export class LoopController {
       ? await this.nextV12(currentStage)
       : this.nextV11(currentStage);
 
+    // Sequential multi-story: when archive completes, pull next pending story
+    if (this.configLoopOptions.enableOuterLoop && result.success) {
+      await this.advanceOuterBoardIfNeeded(result);
+    }
+
     // V12: Sync state to file at the end of each cycle
     await this.syncStateToFile();
     return result;
+  }
+
+  /**
+   * After a story finishes archive, dequeue the next pending story onto the board
+   * and reset pipeline to design so aza_loop(full) continues the batch.
+   */
+  private async advanceOuterBoardIfNeeded(
+    result: LoopResponse<{ stage: string; progress: string; next_action: NextAction; awaitingAction?: NextAction }>,
+  ): Promise<void> {
+    if (!this.stateManager) return;
+    const stage = result.metadata?.stage || result.data?.stage;
+    const action = result.next_action?.action;
+    if (stage !== 'archive' || (action !== 'done' && action !== 'ship')) return;
+
+    const state = this.stateManager.getState();
+    const board = state.loops?.outer?.board || { pending: [], in_progress: [], done: [], blocked: [] };
+    const doneStory = state.loop.current_story;
+    const pending = [...(board.pending || [])];
+    const nextStory = pending.shift();
+    const done = [...(board.done || [])];
+    if (doneStory) done.push(doneStory);
+
+    if (!nextStory) {
+      await this.stateManager.update({
+        loops: {
+          ...state.loops,
+          outer: {
+            ...state.loops.outer,
+            board: { ...board, pending: [], in_progress: [], done, blocked: board.blocked || [] },
+          },
+        },
+      });
+      return;
+    }
+
+    // Reset pipeline for next story (keep PRD approved — start at design)
+    this.stateMachine.loadState({
+      current_stage: 'design',
+      stages: {
+        open: { status: 'completed' },
+        design: { status: 'pending' },
+        build: { status: 'pending' },
+        verify: { status: 'pending' },
+        archive: { status: 'pending' },
+      } as any,
+      iteration: this.stateMachine.getState().iteration,
+    });
+    this.stateMachine.setInnerLoopState({ current_story: nextStory } as any);
+    await this.stateManager.update({
+      pipeline: {
+        current_stage: 'design',
+        stages: this.stateMachine.getState().stages as any,
+      },
+      loop: {
+        ...state.loop,
+        current_story: nextStory,
+        progress: '20%',
+      },
+      loops: {
+        ...state.loops,
+        outer: {
+          ...state.loops.outer,
+          board: {
+            pending,
+            in_progress: [nextStory],
+            done,
+            blocked: board.blocked || [],
+          },
+        },
+        inner: {
+          ...state.loops.inner,
+          current_story: nextStory,
+        },
+      },
+    });
   }
 
   /**
@@ -513,6 +620,17 @@ export class LoopController {
       };
     };
 
+    // DAG parallel for independent stories when explicitly enabled
+    if (process.env.AZA_OUTER_PARALLEL === 'true') {
+      return await this.outerLoop!.runParallel(
+        storyProvider,
+        stateReader,
+        this.handlerProvider,
+        humanGate,
+        commit,
+      );
+    }
+
     const result = await this.outerLoop!.run(
       storyProvider,
       stateReader,
@@ -535,21 +653,21 @@ export class LoopController {
 
     if (outerResult.done) {
       return this.buildResponse('archive', {
-        tool: 'aza_loop_next', action: 'done',
+        tool: 'aza_loop', action: 'done',
         reason: 'All stories processed — project complete',
       });
     }
 
     if (outerResult.escalated) {
       return this.buildResponse(stage, {
-        tool: 'aza_loop_next', action: 'escalate',
+        tool: 'aza_loop', action: 'escalate',
         reason: outerResult.escalation_reason || 'OuterLoop escalated to human',
       }, true);
     }
 
     // Continue with next story
     return this.buildResponse(stage, {
-      tool: 'aza_loop_next', action: 'next',
+      tool: 'aza_loop', action: 'next',
       reason: `OuterLoop cycle ${outerResult.total_cycles} completed — continue to next story`,
     });
   }
@@ -571,7 +689,7 @@ export class LoopController {
       this.stateMachine.setStageStatus('open', 'in_progress');
       this.stateMachine.loadState({ current_stage: 'open' });
       return this.buildResponse('open', {
-        tool: 'aza_prd_review', action: 'refine',
+        tool: 'aza_prd', action: 'modify',
         reason: 'Drift detected: PRD or contract changed out-of-band. Returning to open stage to regenerate.',
       }, false, 'inner');
     }
@@ -584,8 +702,8 @@ export class LoopController {
     if (stage !== 'open' && stageInfo.status === 'pending') {
       if (!this.dpRegistry.canEnterStage(stage)) {
         return this.buildResponse(stage, {
-          tool: 'aza_loop_next', action: 'escalate',
-          reason: `DP gate blocked: stage "${stage}" requires its Decision Point to be passed first. Complete the prior stage via aza_loop_next.`,
+          tool: 'aza_loop', action: 'escalate',
+          reason: `DP gate blocked: stage "${stage}" requires its Decision Point to be passed first. Complete the prior stage via aza_loop(action=next) or aza_loop(full).`,
         }, true);
       }
     }
@@ -593,7 +711,7 @@ export class LoopController {
     // Hard stop check
     if (this.hardStop.isStopped()) {
       return this.buildResponse(stage, {
-        tool: 'aza_loop_next', action: 'report',
+        tool: 'aza_loop', action: 'report',
         reason: `Hard stop: ${this.hardStop.getRecord()?.reason}`,
       }, true);
     }
@@ -602,8 +720,10 @@ export class LoopController {
     const breakerResult = this.circuitBreaker.checkAll();
     if (breakerResult?.tripped) {
       this.hardStop.stop('max_iterations_exceeded', breakerResult.reason!, this.stateMachine.getState().iteration);
+      this.stateMachine.setStageStatus(stage, 'blocked', breakerResult.reason);
+      this.stateMachine.loadState({ current_stage: stage });
       return this.buildResponse(stage, {
-        tool: 'aza_loop_next', action: 'escalate',
+        tool: 'aza_loop', action: 'escalate',
         reason: `Circuit breaker tripped: ${breakerResult.reason}`,
       }, true);
     }
@@ -615,7 +735,7 @@ export class LoopController {
     if (iterCheck.exceeded) {
       this.hardStop.stop('max_iterations_exceeded', iterCheck.detail!, this.stateMachine.getState().iteration);
       return this.buildResponse(stage, {
-        tool: 'aza_loop_next', action: 'stop',
+        tool: 'aza_loop', action: 'stop',
         reason: iterCheck.detail!,
       }, true);
     }
@@ -642,7 +762,7 @@ export class LoopController {
           stage,
           iteration: this.stateMachine.getState().iteration,
           error: `3-Strike hard stop: ${this.strikeSystem.getStrikeCount()} strikes`,
-          lastAction: { tool: 'aza_loop_next', action: 'next', reason: '3-strike escalation' },
+          lastAction: { tool: 'aza_loop', action: 'next', reason: '3-strike escalation' },
           strikeCount: this.strikeSystem.getStrikeCount(),
         }, this.configLoopOptions.azaDir || '.aza');
       } catch {
@@ -650,10 +770,21 @@ export class LoopController {
       }
 
       return this.buildResponse('design', {
-        tool: 'aza_loop_next', action: 'escalate',
-        reason: `3-Strike: architecture questioned after ${this.strikeSystem.getStrikeCount()} strikes — returning to design stage. Run aza_task_design to revise the approach.`,
+        tool: 'aza_loop', action: 'escalate',
+        reason: `3-Strike: architecture questioned after ${this.strikeSystem.getStrikeCount()} strikes — returning to design stage. Run aza_spec(design) to revise the approach.`,
       }, true);
     }
+
+    // V20 Task 4: Token budget hard cap check
+    const budgetAction: BudgetAction = this.tokenBudget.checkBudget();
+    if (budgetAction === 'stop') {
+      this.hardStop.stop('critical_error', 'token budget exhausted', this.stateMachine.getState().iteration);
+      return this.buildResponse(stage, {
+        tool: 'aza_loop', action: 'stop',
+        reason: 'token budget exhausted',
+      }, true);
+    }
+    // 70% summarize / 80% compress handled via memoryCompressor in stage transitions
 
     // ── V16 Core: Call InnerLoop.runStage() for single-stage scheduling ──
     const innerState = this.stateMachine.getInnerLoopState();
@@ -669,7 +800,10 @@ export class LoopController {
       try {
         const bundle = await this.contextOrchestrator.generateContextFiles(stage);
         const injected = await this.contextOrchestrator.injectContext(stage);
-        const pruned = this.contextOrchestrator.pruneContext(injected, this.tokenBudget);
+        const pruned = this.contextOrchestrator.pruneContext(
+          injected,
+          this.tokenBudget.getRemainingPerTask(),
+        );
         // Store pruned context for handlers to use — ContextEntryBundle structure
         contextBundle = pruned;
         this.checkerCache.set(`context:${stage}`, { result: contextBundle, timestamp: Date.now() });
@@ -731,12 +865,12 @@ export class LoopController {
         if (gateResult.canStop) {
           this.stateMachine.setStageStatus('archive', 'completed');
           return this.buildResponse('archive', {
-            tool: 'aza_loop_next', action: 'done',
+            tool: 'aza_loop', action: 'done',
             reason: 'All stages complete — project archived',
           });
         } else {
           return this.buildResponse(stage, {
-            tool: 'aza_loop_next', action: 'refine',
+            tool: 'aza_quality', action: 'check',
             reason: `CompletionGate blocked: ${gateResult.blockedReason}`,
           });
         }
@@ -765,7 +899,7 @@ export class LoopController {
     if (innerStageResult.escalated) {
       this.circuitBreaker.recordFailure('inner', innerStageResult.escalation_reason || 'Stage failed');
       return this.buildResponse(stage, {
-        tool: 'aza_loop_next', action: 'escalate',
+        tool: 'aza_loop', action: 'escalate',
         reason: innerStageResult.escalation_reason || `Stage "${stage}" escalated`,
       }, false, 'inner');
     }
@@ -778,13 +912,14 @@ export class LoopController {
     if (phaseCheck.tripped) {
       this.circuitBreaker.recordFailure('inner', `Phase "${stage}" circuit breaker tripped`);
       return this.buildResponse(stage, {
-        tool: 'aza_loop_next', action: 'escalate',
+        tool: 'aza_loop', action: 'escalate',
         reason: `Stage "${stage}" circuit breaker tripped: ${phaseCheck.reason}`,
       }, false, 'inner');
     }
 
     return this.buildResponse(stage, {
-      tool: 'aza_task_implement', action: 'refine',
+      tool: 'aza_spec',
+      action: stage === 'design' ? 'design' : stage === 'verify' ? 'verify' : 'implement',
       reason: `Stage "${stage}" needs refinement (iteration ${innerStageResult.iteration})`,
     }, false, 'phase');
   }
@@ -797,7 +932,7 @@ export class LoopController {
 
     if (this.hardStop.isStopped()) {
       return this.buildResponse(stage, {
-        tool: 'aza_loop_next', action: 'report',
+        tool: 'aza_loop', action: 'report',
         reason: `Hard stop: ${this.hardStop.getRecord()?.reason}`,
       }, true);
     }
@@ -808,7 +943,7 @@ export class LoopController {
     if (iterCheck.exceeded) {
       this.hardStop.stop('max_iterations_exceeded', iterCheck.detail!, this.stateMachine.getState().iteration);
       return this.buildResponse(stage, {
-        tool: 'aza_loop_next', action: 'stop', reason: iterCheck.detail!,
+        tool: 'aza_loop', action: 'stop', reason: iterCheck.detail!,
       }, true);
     }
 
@@ -818,7 +953,7 @@ export class LoopController {
         `Stage "${stage}" exceeded max stage iterations (${this.configLoopOptions.maxStageIterations})`,
         this.stateMachine.getState().iteration);
       return this.buildResponse(stage, {
-        tool: 'aza_loop_next', action: 'escalate',
+        tool: 'aza_loop', action: 'escalate',
         reason: `Stage ${stage} stuck after ${currentStageIter} attempts`,
       }, true);
     }
@@ -829,7 +964,7 @@ export class LoopController {
     if (strikeCheck.exceeded) {
       this.hardStop.stop('strikes_exceeded', strikeCheck.detail!, this.stateMachine.getState().iteration);
       return this.buildResponse(stage, {
-        tool: 'aza_loop_next', action: 'escalate', reason: strikeCheck.detail!,
+        tool: 'aza_loop', action: 'escalate', reason: strikeCheck.detail!,
       }, true);
     }
 
@@ -843,7 +978,7 @@ export class LoopController {
         // audit, benchmark) which produce the final summary reports.
         this.notifyCompletion();
         return this.buildResponse(stage, {
-          tool: 'aza_loop_next', action: 'done', reason: 'All stages complete',
+          tool: 'aza_loop', action: 'done', reason: 'All stages complete',
         });
       }
       this.stateMachine.advance();
@@ -856,8 +991,10 @@ export class LoopController {
     this.stateMachine.setStageStatus(stage as any, 'in_progress');
 
     return this.buildResponse(stage, {
-      tool: guardResult.refine_tool || 'aza_task_implement',
-      action: guardResult.refine_action || 'refine',
+      tool: guardResult.refine_tool || 'aza_spec',
+      action: (guardResult.refine_action === 'refine'
+        ? (stage === 'design' ? 'design' : stage === 'verify' ? 'verify' : 'implement')
+        : (guardResult.refine_action || (stage === 'design' ? 'design' : 'implement'))),
       reason: guardResult.reason || `Quality checks not passed for stage "${stage}"`,
     });
   }
@@ -885,12 +1022,33 @@ export class LoopController {
     }
     if (stage === 'archive') {
       this.stateMachine.setStageStatus('archive', 'completed');
+      // Fire-and-forget DP-5; sync is best-effort for V11 complete path
+      void this.dpRegistry.record('DP-5', 'archive', 'done', 'passed', {
+        iteration: this.stateMachine.getState().iteration,
+        reason: 'Archive stage completed',
+      });
+      void this.syncStateToFile();
       return { success: true };
     }
     this.stateMachine.setStageStatus(stage as any, 'completed');
     this.stateMachine.advance();
     const nextStage = this.stateMachine.getCurrentStage();
     this.stateMachine.setStageStatus(nextStage, 'in_progress');
+
+    const dpMap: Record<string, { id: 'DP-0' | 'DP-1' | 'DP-2' | 'DP-3' | 'DP-4'; from: any; to: any }> = {
+      open: { id: 'DP-1', from: 'open', to: 'design' },
+      design: { id: 'DP-2', from: 'design', to: 'build' },
+      build: { id: 'DP-3', from: 'build', to: 'verify' },
+      verify: { id: 'DP-4', from: 'verify', to: 'archive' },
+    };
+    const dp = dpMap[stage];
+    if (dp) {
+      void this.dpRegistry.record(dp.id, dp.from, dp.to, 'passed', {
+        iteration: this.stateMachine.getState().iteration,
+        reason: `Stage "${stage}" completed → "${nextStage}"`,
+      });
+    }
+    void this.syncStateToFile();
     return { success: true };
   }
 
@@ -978,7 +1136,7 @@ export class LoopController {
     const mcpIsolated = true; // MCP servers are always isolated by design
 
     // Cost signals
-    const budgetConfigured = this.tokenBudget !== 4000 || // non-default budget
+    const budgetConfigured = this.tokenBudget.perSessionLimit !== 120_000 || // non-default budget
       typeof (this.config?.loop as any)?.token_budget === 'number';
     const runLogCostTracked = this.ledgerHasProgress || runLogExists;
 
@@ -1035,7 +1193,7 @@ export class LoopController {
     isHardStop = false,
     loopLevel: 'outer' | 'inner' | 'phase' = 'phase',
     /** V18: When non-null, this is the V16 pre-action instruction for the LLM
-     *  to execute a specific tool (e.g. aza_task_implement) before calling
+     *  to execute a specific tool (e.g. aza_spec) before calling
      *  next() again. Propagated into `data.awaitingAction` so AutoLoopDriver
      *  and AutoLoopScheduler can detect it. */
     awaitingAction?: NextAction,
@@ -1064,12 +1222,12 @@ export class LoopController {
 
   private getStageEntryAction(stage: string): NextAction {
     const actions: Record<string, NextAction> = {
-      open: { tool: 'aza_prd_generate', action: 'generate', reason: 'Entering open stage — generate PRD first' },
-      design: { tool: 'aza_task_design', action: 'design', reason: 'Entering design stage — design stories' },
-      build: { tool: 'aza_task_implement', action: 'implement', reason: 'Entering build stage — implement with tests' },
-      verify: { tool: 'aza_quality_check', action: 'check', reason: 'Entering verify stage — run quality gates' },
-      archive: { tool: 'aza_doc_generate', action: 'generate', reason: 'Entering archive stage — finalize documentation' },
+      open: { tool: 'aza_prd', action: 'review', reason: 'Entering open stage — review/approve PRD first' },
+      design: { tool: 'aza_spec', action: 'design', reason: 'Entering design stage — design stories' },
+      build: { tool: 'aza_spec', action: 'implement', reason: 'Entering build stage — implement with tests' },
+      verify: { tool: 'aza_quality', action: 'check', reason: 'Entering verify stage — run quality gates' },
+      archive: { tool: 'aza_finish', action: 'ship', reason: 'Entering archive stage — ship delivery' },
     };
-    return actions[stage] || { tool: 'aza_loop_next', action: 'next', reason: `Continue in ${stage} stage` };
+    return actions[stage] || { tool: 'aza_loop', action: 'full', reason: `Continue in ${stage} stage` };
   }
 }

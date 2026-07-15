@@ -71,3 +71,4 @@ mcp.json
 # Client cache
 .qoder/
 .uploads/
+.agentvault/

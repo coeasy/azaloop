@@ -93,6 +93,26 @@ export class DecisionPointRegistry {
   }
 
   /**
+   * Append a tool-name audit marker (e.g. aza_prd_approve) for T18 gate checks.
+   * Distinct from DP records — scanned by hasAuditRecord().
+   */
+  async markToolEvent(
+    tool: string,
+    options?: { iteration?: number; reason?: string },
+  ): Promise<void> {
+    if (!this.auditLogPath) return;
+    await fs.mkdir(path.dirname(this.auditLogPath), { recursive: true });
+    const line =
+      JSON.stringify({
+        tool,
+        iteration: options?.iteration ?? 0,
+        reason: options?.reason,
+        timestamp: new Date().toISOString(),
+      }) + '\n';
+    await fs.appendFile(this.auditLogPath, line, 'utf8');
+  }
+
+  /**
    * Get the status of a specific decision point.
    */
   getStatus(id: DecisionPointId): DPStatus | null {
@@ -121,11 +141,14 @@ export class DecisionPointRegistry {
     const status = this.getStatus(dpId);
     if (status !== 'passed') return false;
 
-    // T18 enforcement: direct check on the audit log for aza_prd_approve.
-    // This is synchronous to keep canEnterStage cheap; for tests we accept
-    // a missing audit log as "no approve record" (fail-closed).
+    // T18 enforcement: require an aza_prd_approve (or unified aza_prd) tool marker
+    // in the DP audit log. Accept either legacy or unified name so approve via
+    // aza_prd(action=approve) + markToolEvent unlocks design.
     if (stage === 'design') {
-      return this.hasAuditRecord('aza_prd_approve');
+      return (
+        this.hasAuditRecord('aza_prd_approve') ||
+        this.hasAuditRecord('aza_prd')
+      );
     }
     return true;
   }

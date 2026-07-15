@@ -107,7 +107,7 @@ describe('PRDReviewGate HARD-GATE (T25)', () => {
       expect(result.red_flags).toBeDefined();
       expect(result.red_flags).toHaveLength(3);
       expect(result.instruction).toContain('HARD-GATE');
-      expect(result.source).toBe('aza-prd');
+      expect(result.source).toBe('openspec');
     });
 
     it('does NOT enter HARD-GATE when requires_approval=false', async () => {
@@ -117,14 +117,14 @@ describe('PRDReviewGate HARD-GATE (T25)', () => {
       expect(result.instruction).not.toContain('HARD-GATE');
     });
 
-    it('defaults to source="aza-prd" when not specified', async () => {
+    it('defaults to source="openspec" when not specified', async () => {
       const result = await gate.review(minimalInput({ skillMeta: NON_HARDGATE_SKILL }));
-      expect(result.source).toBe('aza-prd');
+      expect(result.source).toBe('openspec');
     });
 
-    it('honors source="openspec" when caller opts in', async () => {
-      const result = await gate.review(minimalInput({ source: 'openspec' }));
-      expect(result.source).toBe('openspec');
+    it('honors source="aza-prd" when caller opts out of openspec', async () => {
+      const result = await gate.review(minimalInput({ source: 'aza-prd' }));
+      expect(result.source).toBe('aza-prd');
     });
   });
 

@@ -2,11 +2,11 @@
 
 ## Product Requirements Document (PRD)
 
-**版本**: 0.1.0
+**版本**: 0.4.0
 **创建日期**: 2026-04-22
-**最后更新**: 2026-07-12
-**状态**: In Progress (0.1.0 — 十层竞品对齐 + 全自动循环贯通)
-**最近更新**: 2026-07-12 全量优化审计完成（上下文/批处理/缓存/孤儿逻辑/开源基建）
+**最后更新**: 2026-07-14
+**状态**: In Progress (0.4.0 — PRD 深度 / 竞品补全 / 严格门禁 / 瘦上下文续航 / 一键 pack)
+**最近更新**: 2026-07-14 PRD 生成接入 GitHub 竞品研究；校验 P0+加权≥85；continue/calibrate 瘦包；escalate 软恢复；`aza pack` 一键构建安装包
 
 ---
 
@@ -244,35 +244,33 @@ AzaLoop 是一个 **PRD 驱动的自主开发循环引擎**，支持从用户自
 
 ## 3. MCP 工具接口
 
-### 3.1 核心工具（P0）
+### 3.1 统一工具面（P0 — 恰好 8 个）
 
-| 工具名 | 说明 | 动作 |
-|--------|------|------|
-| `aza_prd` | PRD 管理 | generate, save, check, optimize, evolve, merge |
-| `aza_loop` | 循环控制 | next, status, turbo, control |
-| `aza_task` | 任务管理 | verify, batch_verify, complete, fail |
-| `aza_quality` | 质量检查 | check, multi_qa, health_audit |
+| 工具名 | 说明 | 主要 action |
+|--------|------|-------------|
+| `aza_session` | 会话生命周期 | init, start, calibrate, status, continue, health |
+| `aza_prd` | PRD 闸门 | review, approve, modify, cancel, generate, validate |
+| `aza_loop` | 循环驱动 | next, status, complete, full, report_tool, circuit, gate, audit |
+| `aza_spec` | 规格/实现 | design, implement, verify, explore, propose, apply, archive, dag |
+| `aza_quality` | 质量门禁 | check, security, compliance, eval, style |
+| `aza_finish` | 交付归档 | work, archive, ship, conventions_* |
+| `aza_memory` | 记忆 | query, record |
+| `aza_meta` | 诊断/扩展 | skills_*, runstate_*, audit_log_*, worktree, swarm, stores, dlp_scan |
 
-### 3.2 标准工具（P1）
+遗留复合名（如 `aza_task_design`、`aza_context_calibrate`）经 legacy-router / `LEGACY_TOOL_MAP` 薄适配到上表，**禁止**再维护第二套业务实现。
 
-| 工具名 | 说明 | 动作 |
-|--------|------|------|
-| `aza_memory` | 记忆管理 | query, list |
-| `aza_context` | 上下文管理 | status, calibrate, metrics |
-| `aza_health` | 健康检查 | check, audit |
-| `aza_ship` | 交付 | (自动执行构建+测试+提交) |
+### 3.2 全自动脊柱（Cursor）
 
-### 3.3 高级工具（P2）
+```
+aza_session(calibrate)
+→ aza_prd(review, auto_approve=true)
+→ aza_loop(full)
+→ awaitingAction: aza_spec / aza_quality
+→ aza_loop(report_tool)
+→ aza_finish(ship)
+```
 
-| 工具名 | 说明 | 动作 |
-|--------|------|------|
-| `aza_skill` | Skill 管理 | search, list, install |
-| `aza_style` | 风格学习 | learn, apply |
-| `aza_align` | 对齐检查 | check |
-| `aza_security` | 安全扫描 | report, pii_scan |
-| `aza_workflow` | 工作流 | compose, run |
-
-### 3.4 工具响应格式
+### 3.3 工具响应格式
 
 所有工具返回统一格式：
 
@@ -420,16 +418,23 @@ aza init --cursor --full-auto
 ### 6.2 标准工作流
 
 ```
-1. PRD 生成
-   aza_prd(action:"generate") → aza_prd(action:"save") → aza_prd(action:"check")
+1. 会话续航
+   aza_session(action:"calibrate"|continue) → 跟随 next_action
 
-2. 开发循环
-   aza_loop(action:"next") → 编码 → aza_task(action:"verify", pipeline:true) → 重复
+2. PRD 闸门（含 GitHub 竞品自补充）
+   aza_prd(action:"review") → aza_prd(action:"approve")
+   产物落盘: .aza/prd.md | prd.json | competitive-research.md | contract.md | openspec/changes/...
 
-3. 交付
-   aza_quality(action:"check") → aza_ship
+3. 开发循环（合作式全自动）
+   aza_loop(action:"full")
+   → 若 awaitingAction: 执行 aza_spec / aza_quality → aza_loop(report_tool, tool_name=...)
+   → 重复直到 done
+
+4. 交付
+   aza_quality(action:"check") → aza_finish(action:"ship")
 ```
 
+无人值守：设置 `AZA_AUTO_APPROVE_PRD=true` 或 `auto_approve=true`，review 后自动 approve 并进入 `aza_loop(full)`。
 ### 6.3 全自动模式
 
 ```json
