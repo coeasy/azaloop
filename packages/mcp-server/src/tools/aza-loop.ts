@@ -22,6 +22,11 @@ function normalizeRoot(projectRoot: string): string {
   }
 }
 
+/** 跨客户端隔离键：client::root，避免同一进程内多客户端共享同一份内存循环状态。 */
+function cacheKey(root: string, client?: string): string {
+  return client ? `${client}::${root}` : root;
+}
+
 function stateYamlMtime(root: string): number {
   try {
     return fs.statSync(path.join(root, '.aza', 'STATE.yaml')).mtimeMs;
@@ -30,19 +35,20 @@ function stateYamlMtime(root: string): number {
   }
 }
 
-function buildController(projectRoot: string): LoopController {
+function buildController(projectRoot: string, client?: string): LoopController {
   const root = normalizeRoot(projectRoot);
+  const key = cacheKey(root, client);
   const mtime = stateYamlMtime(root);
-  const cached = controllerCache.get(root);
+  const cached = controllerCache.get(key);
   if (cached) {
-    const prev = stateMtimeCache.get(root) ?? 0;
+    const prev = stateMtimeCache.get(key) ?? 0;
     if (prev && mtime && mtime !== prev) {
       // Disk changed outside this process (other client/session) — drop cache
-      controllerCache.delete(root);
-      driverCache.delete(root);
-      schedulerCache.delete(root);
+      controllerCache.delete(key);
+      driverCache.delete(key);
+      schedulerCache.delete(key);
     } else {
-      stateMtimeCache.set(root, mtime);
+      stateMtimeCache.set(key, mtime);
       return cached;
     }
   }
@@ -77,8 +83,8 @@ function buildController(projectRoot: string): LoopController {
   } catch {
     /* best-effort */
   }
-  controllerCache.set(root, lc);
-  stateMtimeCache.set(root, mtime);
+  controllerCache.set(key, lc);
+  stateMtimeCache.set(key, mtime);
   return lc;
 }
 
@@ -198,13 +204,13 @@ export async function markPrdApproved(projectRoot?: string): Promise<void> {
 
 // ── Core loop tools ──
 
-export async function handleLoopNext(currentStage?: string, projectRoot?: string): Promise<LoopResponse> {
-  const lc = buildController(projectRoot ?? process.cwd());
+export async function handleLoopNext(currentStage?: string, projectRoot?: string, client?: string): Promise<LoopResponse> {
+  const lc = buildController(projectRoot ?? process.cwd(), client);
   return await lc.next(currentStage as any);
 }
 
-export async function handleLoopStatus(projectRoot?: string): Promise<LoopResponse> {
-  const lc = buildController(projectRoot ?? process.cwd());
+export async function handleLoopStatus(projectRoot?: string, client?: string): Promise<LoopResponse> {
+  const lc = buildController(projectRoot ?? process.cwd(), client);
   const state = lc.stateMachine.getState();
   const phaseState = lc.stateMachine.getPhaseLoopState();
   const innerState = lc.stateMachine.getInnerLoopState();
@@ -230,8 +236,8 @@ export async function handleLoopStatus(projectRoot?: string): Promise<LoopRespon
   };
 }
 
-export async function handleLoopComplete(stage: string, projectRoot?: string): Promise<LoopResponse> {
-  const lc = buildController(projectRoot ?? process.cwd());
+export async function handleLoopComplete(stage: string, projectRoot?: string, client?: string): Promise<LoopResponse> {
+  const lc = buildController(projectRoot ?? process.cwd(), client);
   const result = lc.completeStage(stage);
   const state = lc.stateMachine.getState();
 
@@ -255,8 +261,8 @@ export async function handleLoopComplete(stage: string, projectRoot?: string): P
   };
 }
 
-export async function handleLoopSetCondition(key: string, passed: boolean, projectRoot?: string): Promise<LoopResponse> {
-  const lc = buildController(projectRoot ?? process.cwd());
+export async function handleLoopSetCondition(key: string, passed: boolean, projectRoot?: string, client?: string): Promise<LoopResponse> {
+  const lc = buildController(projectRoot ?? process.cwd(), client);
   lc.setCondition(key as any, passed);
   return {
     success: true,
@@ -265,8 +271,8 @@ export async function handleLoopSetCondition(key: string, passed: boolean, proje
   };
 }
 
-export async function handleLoopResetConditions(projectRoot?: string): Promise<LoopResponse> {
-  const lc = buildController(projectRoot ?? process.cwd());
+export async function handleLoopResetConditions(projectRoot?: string, client?: string): Promise<LoopResponse> {
+  const lc = buildController(projectRoot ?? process.cwd(), client);
   lc.resetConditions();
   return {
     success: true,
@@ -275,8 +281,8 @@ export async function handleLoopResetConditions(projectRoot?: string): Promise<L
   };
 }
 
-export async function handleLoopStop(reason: string, projectRoot?: string): Promise<LoopResponse> {
-  const lc = buildController(projectRoot ?? process.cwd());
+export async function handleLoopStop(reason: string, projectRoot?: string, client?: string): Promise<LoopResponse> {
+  const lc = buildController(projectRoot ?? process.cwd(), client);
   lc.stop('user_requested', reason);
   const state = lc.stateMachine.getState();
   return {
@@ -287,8 +293,8 @@ export async function handleLoopStop(reason: string, projectRoot?: string): Prom
   };
 }
 
-export async function handleLoopGetStageIterations(stage: string, projectRoot?: string): Promise<LoopResponse> {
-  const lc = buildController(projectRoot ?? process.cwd());
+export async function handleLoopGetStageIterations(stage: string, projectRoot?: string, client?: string): Promise<LoopResponse> {
+  const lc = buildController(projectRoot ?? process.cwd(), client);
   const count = lc.getStageIterations(stage);
   return {
     success: true,
@@ -299,8 +305,8 @@ export async function handleLoopGetStageIterations(stage: string, projectRoot?: 
 
 // ── V12: Circuit breaker status ──
 
-export async function handleLoopCircuitBreaker(projectRoot?: string): Promise<LoopResponse> {
-  const lc = buildController(projectRoot ?? process.cwd());
+export async function handleLoopCircuitBreaker(projectRoot?: string, client?: string): Promise<LoopResponse> {
+  const lc = buildController(projectRoot ?? process.cwd(), client);
   const phaseMetrics = lc.circuitBreaker.getMetrics('phase');
   const innerMetrics = lc.circuitBreaker.getMetrics('inner');
   const outerMetrics = lc.circuitBreaker.getMetrics('outer');
@@ -326,8 +332,8 @@ export async function handleLoopCircuitBreaker(projectRoot?: string): Promise<Lo
 
 // ── V12: Completion gate check ──
 
-export async function handleLoopCompletionGate(projectRoot?: string): Promise<LoopResponse> {
-  const lc = buildController(projectRoot ?? process.cwd());
+export async function handleLoopCompletionGate(projectRoot?: string, client?: string): Promise<LoopResponse> {
+  const lc = buildController(projectRoot ?? process.cwd(), client);
   const state = lc.stateMachine.getState();
   const hasInProgress = Object.values(state.stages).some(s => s.status === 'in_progress');
 
@@ -359,8 +365,8 @@ export async function handleLoopCompletionGate(projectRoot?: string): Promise<Lo
 
 // ── V12: Loop audit ──
 
-export async function handleLoopAudit(projectRoot?: string): Promise<LoopResponse> {
-  const lc = buildController(projectRoot ?? process.cwd());
+export async function handleLoopAudit(projectRoot?: string, client?: string): Promise<LoopResponse> {
+  const lc = buildController(projectRoot ?? process.cwd(), client);
   const result = await lc.audit();
 
   return {
@@ -381,12 +387,13 @@ export async function handleLoopAudit(projectRoot?: string): Promise<LoopRespons
 
 // ── P0-4: MCP AutoLoopDriver integration ──
 
-function buildDriver(projectRoot: string): AutoLoopDriver {
+export function buildDriver(projectRoot: string, client?: string): AutoLoopDriver {
   const root = normalizeRoot(projectRoot);
-  const cached = driverCache.get(root);
+  const key = cacheKey(root, client);
+  const cached = driverCache.get(key);
   if (cached) return cached;
 
-  const lc = buildController(root);
+  const lc = buildController(root, client);
   const driver = new AutoLoopDriver(lc, {
     maxIterations: 50,
     enableSentinelDetection: true,
@@ -405,18 +412,19 @@ function buildDriver(projectRoot: string): AutoLoopDriver {
       console.warn(`[AutoLoopDriver] Escalated at stage "${stage}": ${reason}`);
     },
   });
-  driverCache.set(root, driver);
+  driverCache.set(key, driver);
   return driver;
 }
 
 // ── V16: AutoLoopScheduler (background auto-loop) ──
 
-function buildScheduler(projectRoot: string): AutoLoopScheduler {
+function buildScheduler(projectRoot: string, client?: string): AutoLoopScheduler {
   const root = normalizeRoot(projectRoot);
-  const cached = schedulerCache.get(root);
+  const key = cacheKey(root, client);
+  const cached = schedulerCache.get(key);
   if (cached) return cached;
 
-  const lc = buildController(root);
+  const lc = buildController(root, client);
   const scheduler = new AutoLoopScheduler(lc, {
     onStageChange: (stage) => {
       // Log stage changes
@@ -432,7 +440,7 @@ function buildScheduler(projectRoot: string): AutoLoopScheduler {
       console.error(`[AutoLoopScheduler] Error: ${error.message}`);
     },
   });
-  schedulerCache.set(root, scheduler);
+  schedulerCache.set(key, scheduler);
   return scheduler;
 }
 
@@ -455,6 +463,7 @@ export async function handleAutoLoop(
   currentStage?: string,
   projectRoot?: string,
   toolName?: string,
+  client?: string,
 ): Promise<LoopResponse> {
   const root = normalizeRoot(projectRoot ?? process.cwd());
 
@@ -603,6 +612,30 @@ export async function handleAutoLoop(
           };
         }
         // Continue stepping while engine self-advances without host tools
+      }
+      // R10: 驱动已到达 maxIterations 上限 → 明确终态（stop），
+      // 不要再误导宿主“paused → 再调 full”，避免跨调用空转。
+      const exhausted = driver.getIteration() >= driver.getMaxIterations();
+      if (exhausted) {
+        return {
+          success: false,
+          data: {
+            status: 'stopped',
+            done: false,
+            reason: `Driver exhausted after ${driver.getMaxIterations()} iterations — no clean completion`,
+            last,
+          },
+          next_action: {
+            tool: 'aza_loop',
+            action: 'stop',
+            reason: 'Iteration budget exhausted — stop the loop (no ship on incomplete)',
+          },
+          metadata: {
+            iteration: driver.getIteration(),
+            progress: driver.getLoopController().stateMachine.getProgress(),
+            stage: driver.getCurrentStage(),
+          },
+        };
       }
       return {
         success: true,

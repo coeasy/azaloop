@@ -22,7 +22,7 @@ export class HeartbeatManager {
   private heartbeatPath: string;
   private staleThresholdMs: number;
 
-  constructor(azaDir: string, staleThresholdMs: number = 300000) { // 5 minutes default
+  constructor(azaDir: string, staleThresholdMs: number = 120000) { // R1-P0: 2 minutes default (was 5min)
     this.heartbeatPath = path.join(azaDir, 'HEARTBEAT.yaml');
     this.staleThresholdMs = staleThresholdMs;
   }

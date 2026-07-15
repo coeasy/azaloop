@@ -10,6 +10,7 @@ import {
   writePrdMarkdown,
 } from './github-competitive-research';
 import { PRD_REFINE_SELF_CHECK_PROMPT } from './prd-llm-prompts';
+import { FilePersistor } from '../L2_memory/file-persistor';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -90,6 +91,8 @@ export class PRDReviewGate {
   // V20 Task 1.4: multi-step LLM interaction state
   private pendingDraftInput: PRDGenerationInput | null = null;
   private pendingDraftPrd: PRD | null = null;
+  // R10: 统一文件落盘器（原子写入 + 校验和 + 重试），确保 PRD/契约等产物可靠落到 .aza
+  private filePersistor: FilePersistor;
 
   constructor(options: {
     stateManager: StateManager;
@@ -103,6 +106,7 @@ export class PRDReviewGate {
     this.stateManager = options.stateManager;
     this.resumeGenerator = options.resumeGenerator;
     this.timeoutMs = options.timeoutMs ?? 60000;
+    this.filePersistor = new FilePersistor(this.stateManager.azaDir);
   }
 
   /**
@@ -167,10 +171,14 @@ export class PRDReviewGate {
     // 1. 生成 PRD（带自优化）
     let complexity = input.complexity || this.prdGenerator.inferComplexity(input.description || input.title);
     const enable14 = input.force_14chapters ?? (complexity === 'L3' || complexity === 'L4');
+    // R3: 按复杂度分级——L1 任务跳过自优化和多角色评审，节省 token
+    const isL1 = complexity === 'L1';
+    const selfOptimizeRounds = isL1 ? 1 : 5;
+    const skipMultiRole = isL1;
 
     let prd = this.prdGenerator.generate(input, {
-      enable_self_optimization: true,
-      max_optimization_rounds: 5,
+      enable_self_optimization: !isL1,
+      max_optimization_rounds: selfOptimizeRounds,
       auto_stories: true,
       auto_architecture: true,
       enable_14chapters: enable14,
@@ -208,32 +216,43 @@ export class PRDReviewGate {
           goals: [...prd.goals, ...research.prd_supplements.goals.slice(0, 1)],
         };
       }
-      prd = this.prdGenerator.selfOptimize(prd, 3).prd;
+      // R10: 不再重复 selfOptimize —— generate() 已按复杂度自优化
+      // (L1:1 轮 / 非 L1:5 轮)，此处再跑 3 轮纯属浪费 token 与模型请求。
     }
 
-    // Persist human-readable PRD under project .aza/
+    // Persist human-readable PRD under project .aza/ (原子写入 + 校验和 + 重试)
     try {
       writePrdMarkdown(azaDir, prd, research);
-      if (!fs.existsSync(azaDir)) fs.mkdirSync(azaDir, { recursive: true });
-      fs.writeFileSync(path.join(azaDir, 'prd.json'), JSON.stringify(prd, null, 2), 'utf8');
+      await this.filePersistor.persistPRD(prd);
     } catch {
       /* best-effort */
     }
 
     // 2. 最终检查 + P3-2 multi-role CEO/QA/Eng review
+    // R3: L1 任务跳过多角色评审（节省 4 个 LLM 评审调用的 token）
     const checkResult = this.prdChecker.check(prd);
     let multiRole: import('./prd-multi-role-review').MultiRoleReviewResult | null = null;
-    try {
-      const { runMultiRolePrdReview } = await import('./prd-multi-role-review');
-      multiRole = runMultiRolePrdReview(prd);
-      fs.mkdirSync(azaDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(azaDir, 'prd-multi-role-review.json'),
-        JSON.stringify(multiRole, null, 2),
-        'utf8',
-      );
-    } catch {
-      /* best-effort */
+    if (skipMultiRole) {
+      multiRole = {
+        passed: true,
+        score: 100,
+        reviews: [],
+        findings: [],
+        summary: 'L1 task: multi-role review skipped (cost optimization)',
+      } as any;
+    } else {
+      try {
+        const { runMultiRolePrdReview } = await import('./prd-multi-role-review');
+        multiRole = runMultiRolePrdReview(prd);
+        fs.mkdirSync(azaDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(azaDir, 'prd-multi-role-review.json'),
+          JSON.stringify(multiRole, null, 2),
+          'utf8',
+        );
+      } catch {
+        /* best-effort */
+      }
     }
 
     // Persist plan.md for crash recovery
@@ -829,18 +848,11 @@ export class PRDReviewGate {
     // Run checker
     const checkResult = this.prdChecker.check(parsed);
 
-    // Persist refined PRD
+    // Persist refined PRD (原子写入 + 校验和 + 重试)
     const azaDir = this.stateManager.azaDir ?? '.aza';
     try {
-      const fsMod = await import('fs');
-      const pathMod = await import('path');
-      await fsMod.promises.mkdir(azaDir, { recursive: true });
-      await fsMod.promises.writeFile(
-        pathMod.join(azaDir, 'prd.json'),
-        JSON.stringify(parsed, null, 2),
-        'utf8',
-      );
       writePrdMarkdown(azaDir, parsed);
+      await this.filePersistor.persistPRD(parsed);
     } catch {
       /* best-effort */
     }

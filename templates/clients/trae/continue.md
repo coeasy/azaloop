@@ -1,5 +1,5 @@
 <!-- 共享模板: templates/clients/_shared/v17-continue.md -->
-# AzaLoop Auto-Continue（V17 · 8 工具）
+# AzaLoop Auto-Continue（V17 · 9 工具）
 
 ## 会话启动（MANDATORY）
 
@@ -8,11 +8,20 @@
 
 ## 唯一工具面
 
-`aza_session` · `aza_prd` · `aza_loop` · `aza_spec` · `aza_quality` · `aza_finish` · `aza_memory` · `aza_meta`
+`aza_session` · `aza_auto` · `aza_prd` · `aza_loop` · `aza_spec` · `aza_quality` · `aza_finish` · `aza_memory` · `aza_meta`
 
 （`aza_auto_loop` / `aza_task_*` / `aza_context_*` 仅为 legacy 别名，禁止当作主指令。）
 
-## 全自动脊柱
+## 一键全自动（推荐）
+
+```
+aza_auto(user_input="需求描述")
+→ 自动完成：PRD → 循环 → 质量 → 交付
+```
+
+**调用 aza_auto 后，宿主 AI 必须立即执行返回的 next_action，不要询问用户。**
+
+## 手动全自动脊柱（备选）
 
 ```
 aza_prd(review[, auto_approve=true])

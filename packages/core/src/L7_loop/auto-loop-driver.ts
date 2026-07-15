@@ -21,6 +21,7 @@
 import { LoopController } from './loop-controller';
 import { detectSentinel, type SentinelMatch } from './completion-sentinel';
 import { syncTaskBoardFromResume } from '../L2_memory/task-board';
+import { HeartbeatManager } from '../state/heartbeat';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { LoopResponse, NextAction } from '@azaloop/shared';
@@ -103,6 +104,12 @@ export class AutoLoopDriver {
   private iteration: number = 0;
   private currentStage: Stage = 'open';
   private lastResult: LoopResponse | null = null;
+  // R1-P0: 心跳管理（让跨会话断链检测能反映真实活动）
+  private heartbeatManager: HeartbeatManager | null = null;
+  private sessionId: string;
+  private clientName: string;
+  private modelName: string;
+  private startedAt: string;
 
   constructor(
     loopController: LoopController,
@@ -118,6 +125,19 @@ export class AutoLoopDriver {
       onStep: options.onStep ?? (async () => {}),
       onComplete: options.onComplete ?? (async () => {}),
     };
+    // R1-P0: 初始化心跳（每步 touch），反映真实活动状态
+    this.sessionId = `drv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    this.clientName = process.env.AZA_CLIENT_NAME || 'unknown';
+    this.modelName = process.env.AZA_MODEL_NAME || 'unknown';
+    this.startedAt = new Date().toISOString();
+    const azaDir = (this.loopController as any).configLoopOptions?.azaDir as string | undefined;
+    if (azaDir) {
+      try {
+        this.heartbeatManager = new HeartbeatManager(azaDir, 120000);
+      } catch {
+        this.heartbeatManager = null;
+      }
+    }
   }
 
   /**
@@ -132,6 +152,14 @@ export class AutoLoopDriver {
    */
   getIteration(): number {
     return this.iteration;
+  }
+
+  /**
+   * Get the configured maximum iterations (safety cap). Used by callers to
+   * detect an exhausted driver and terminate cleanly instead of rescheduling.
+   */
+  getMaxIterations(): number {
+    return this.options.maxIterations;
   }
 
   /**
@@ -273,10 +301,26 @@ export class AutoLoopDriver {
     const result = await this.loopController.next(this.currentStage);
     this.lastResult = result;
     this.iteration++;
-
     const action = result.next_action ?? result.data?.next_action ?? null;
-    const stage = result.data?.stage ?? this.currentStage;
-    this.currentStage = stage as Stage;
+    const stage = (result.data?.stage ?? this.currentStage) as Stage;
+    this.currentStage = stage;
+
+    // R1-P0: 每步后更新心跳（best-effort，不阻断循环）
+    if (this.heartbeatManager) {
+      try {
+        await this.heartbeatManager.write({
+          session_id: this.sessionId,
+          client: this.clientName,
+          model: this.modelName,
+          started_at: this.startedAt,
+          last_active_at: new Date().toISOString(),
+          iteration: this.iteration,
+          current_story: this.currentStage,
+        });
+      } catch {
+        // 心跳写失败不阻断主循环
+      }
+    }
 
     // V18: Check for awaitingAction in the response (V16 single-stage scheduling)
     // No longer needs `as any` — buildResponse now propagates awaitingAction in data.

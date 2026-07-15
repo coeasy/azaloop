@@ -15,7 +15,7 @@ import type { PRDGenerationInput, Complexity, ProductType } from './prd-generato
 // ── Types ──
 
 export interface CompetitiveContext {
-  competitors: Array<{ full_name: string; html_url: string; description: string }>;
+  competitors: Array<{ full_name: string; html_url: string; description?: string }>;
   differentiators: string[];
   goals: string[];
   overview_appendix: string;

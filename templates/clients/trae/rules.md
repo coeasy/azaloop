@@ -1,13 +1,20 @@
 <!-- V17 — 共享规则：所有客户端 `aza setup` / rules 生成器的唯一真相源 -->
-# AzaLoop — Trae 全自动协议（V17 · 8 工具）
+# AzaLoop — Trae 全自动协议（V17 · 9 工具）
 
 你在 **Trae**（T1）中运行 AzaLoop。
 
 ## 唯一工具面（必须使用）
 
-`aza_session` · `aza_prd` · `aza_loop` · `aza_spec` · `aza_quality` · `aza_finish` · `aza_memory` · `aza_meta`
+`aza_session` · `aza_auto` · `aza_prd` · `aza_loop` · `aza_spec` · `aza_quality` · `aza_finish` · `aza_memory` · `aza_meta`
 
 遗留名（`aza_task_*` / `aza_context_*` / `aza_auto_loop` / `aza_loop_next`）仅作别名；**主链路禁止以别名作为目标指令**。
+
+## 一键全自动（推荐入口）
+
+**`aza_auto(user_input="需求描述")`** — 一键触发全自动循环，无需手动分步调用。
+
+调用后自动完成：会话初始化 → PRD 生成与审批 → 循环执行 → 质量检查 → 交付。
+宿主 AI 必须立即执行返回的 `next_action`，不要询问用户是否继续。
 
 ## 硬规则
 

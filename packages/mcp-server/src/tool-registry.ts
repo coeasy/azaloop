@@ -213,15 +213,15 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
   },
   {
     name: 'aza_auto',
-    whenToUse: 'one-shot trigger for full auto loop (PRD → loop → ship) in a single conversation',
+    whenToUse: 'ONE-CLICK entry point for full automation — use this when user wants to automatically complete entire development workflow (PRD → design → build → verify → archive) without manual intervention',
     description:
-      '一键触发全自动循环。调用后自动初始化会话、生成 PRD、进入循环。宿主 AI 收到响应后必须立即执行 next_action，不要询问用户。',
+      '【一键全自动入口】调用后自动完成：会话初始化 → PRD 生成与审批 → 循环执行(open→design→build→verify→archive) → 质量检查 → 交付。宿主 AI 收到响应后必须立即执行 next_action，不要询问用户是否继续。这是推荐的全自动循环入口，优于手动分步调用。',
     inputSchema: {
       type: 'object',
       properties: {
-        user_input: { type: 'string', description: 'User requirement description' },
+        user_input: { type: 'string', description: 'User requirement description - what needs to be built' },
         max_iterations: { type: 'number', description: 'Max loop iterations (default: 50)', default: 50 },
-        workspace_path: { type: 'string' },
+        workspace_path: { type: 'string', description: 'Project workspace root path' },
       },
       required: ['user_input'],
     },
@@ -306,6 +306,46 @@ export function validateRegistryConsistency(
   for (const tool of TOOL_REGISTRY) {
     if (!tool.whenToUse?.trim()) errors.push(`Tool "${tool.name}" has empty whenToUse`);
     if (!tool.description?.trim()) errors.push(`Tool "${tool.name}" has empty description`);
+  }
+  return errors;
+}
+
+/**
+ * R6: 跨客户端一致性 — 输出工具面快照（JSON 字符串）
+ * 客户端启动时可拉取此快照并校验本地工具面是否与之一致。
+ * 若漂移则说明客户端规则文件过期，需要重新同步。
+ */
+export function getToolSurfaceSnapshot(): {
+  version: string;
+  generated_at: string;
+  tool_count: number;
+  tools: Array<{ name: string; whenToUse: string; description: string; actions: string[] }>;
+} {
+  return {
+    version: '8.0',
+    generated_at: new Date().toISOString(),
+    tool_count: TOOL_REGISTRY.length,
+    tools: TOOL_REGISTRY.map((t) => ({
+      name: t.name,
+      whenToUse: t.whenToUse,
+      description: t.description,
+      actions: Array.isArray((t.inputSchema.properties as any)?.action?.enum) ?? false
+        ? ((t.inputSchema.properties as any).action.enum as string[])
+        : [],
+    })),
+  };
+}
+
+/**
+ * R6: 验证客户端规则文件包含所有 8 个工具名。
+ * 用于在 azaloop install / 升级时自动检查。
+ */
+export function validateClientTemplate(template: string, expectedTools: string[] = TOOL_REGISTRY.map((t) => t.name)): string[] {
+  const errors: string[] = [];
+  for (const tool of expectedTools) {
+    if (!template.includes(tool)) {
+      errors.push(`Client template missing reference to tool "${tool}"`);
+    }
   }
   return errors;
 }

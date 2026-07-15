@@ -179,12 +179,13 @@ export class StateManager {
     // Ensure .aza directory exists before writing any files
     await fs.mkdir(path.dirname(this.statePath), { recursive: true }).catch(() => {});
     const content = yaml.dump(this.state, { indent: 2 });
-    await fs.writeFile(this.statePath, content, 'utf8');
+    // R1-P0: 原子写入（tmp + rename），避免进程崩溃导致 STATE.yaml 半写损坏
+    await this.atomicWriteState(this.statePath, content);
     const checksum = await computeChecksum(content);
-    await fs.writeFile(this.checksumPath, checksum, 'utf8');
+    await this.atomicWriteState(this.checksumPath, checksum);
     // Save content hash for content-level stale detection
     const contentHash = await this.computeContentHash();
-    await this.saveContentHash(contentHash);
+    await this.atomicWriteState(this.contentHashPath, contentHash);
     this.state.updated_at = new Date().toISOString();
   }
 

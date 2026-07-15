@@ -96,9 +96,11 @@ function buildSearchKeywords(title: string, description: string): string {
 export interface CompetitorHit {
   full_name: string;
   html_url: string;
-  description: string;
+  description?: string;
   stars: number;
   language?: string;
+  /** R5: 标识来源（api=GitHub live, curated=离线） */
+  source?: 'api' | 'curated';
 }
 
 export interface CompetitiveResearchResult {
@@ -163,6 +165,7 @@ function curatedPool(): CompetitorHit[] {
       description: 'Spec-driven changes: propose → apply → archive',
       stars: 0,
       language: 'TypeScript',
+      source: 'curated' as const,
     },
     {
       full_name: 'github/spec-kit',
@@ -348,7 +351,10 @@ function buildSupplements(competitors: CompetitorHit[]): CompetitiveResearchResu
       '',
       ...competitors.map(
         (c) =>
-          `- [${c.full_name}](${c.html_url}) — ${c.description || 'n/a'}${c.stars ? ` (★${c.stars})` : ''}`,
+          // R5: stars 真实化——curated 池标记 unrated，API 数据展示真实数
+          `- [${c.full_name}](${c.html_url}) — ${c.description || 'n/a'}${
+            c.source === 'api' && c.stars ? ` (★${c.stars})` : ' (unrated — curated)'
+          }`,
       ),
       '',
       '### Differentiation',

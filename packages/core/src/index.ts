@@ -154,6 +154,9 @@ export type { SemanticMemory } from './L2_memory/long-term-memory';
 export { SessionCatchup } from './L2_memory/session-catchup';
 export type { CatchupSummary } from './L2_memory/session-catchup';
 export { MemoryCompressor } from './L2_memory/compression';
+// R1-P0: 导出统一文件落盘器
+export { FilePersistor } from './L2_memory/file-persistor';
+export type { PersistResult, PersistOptions } from './L2_memory/file-persistor';
 export { ContextOrchestrator } from './L2_memory/context-orchestrator';
 export type {
   ContextEntry,
@@ -418,6 +421,7 @@ export type {
 export {
   CircuitBreaker,
   DEFAULT_CIRCUIT_BREAKER_CONFIG,
+  errorSignature,
 } from './L7_loop/circuit-breaker';
 export type {
   CircuitBreakerLevel,

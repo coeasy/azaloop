@@ -20,6 +20,7 @@ import { InjectionEngine } from '../L9_knowledge/injection-engine';
 import { ConfigLoader } from '../config/config-loader';
 import { DecisionPointRegistry, contentHash, type DecisionPointRecord, type DPStatus } from './decision-points';
 import { ResumeGenerator } from '../continuity/resume-generator';
+import { AZALOOP_ENGINE_VERSION } from '../continuity/resume-generator';
 import { ProgressLedger2D } from './progress-ledger';
 import * as fs from 'fs';
 import type { LoopResponse, NextAction } from '@azaloop/shared';
@@ -556,6 +557,8 @@ export class LoopController {
         next_tool: entry.tool,
         next_action: entry.action,
         last_milestone: new Date().toISOString(),
+        // R10: 每次落盘都刷新引擎代际，跨客户端/跨会话恢复可据此识别不兼容状态
+        engine_version: AZALOOP_ENGINE_VERSION,
       }).catch(() => {
         // best-effort: RESUME.md generation failure is non-fatal
       });

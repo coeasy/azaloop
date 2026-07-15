@@ -4,7 +4,7 @@
  */
 
 import type { StateManager, ResumeGenerator } from '@azaloop/core';
-import { breakLoop } from '@azaloop/core';
+import { breakLoop, AutoLoopDriver, LoopController, AutoLoopEngine } from '@azaloop/core';
 import {
   handlePRDGenerate,
   handlePRDValidate,
@@ -274,10 +274,16 @@ export async function handleAzaPrd(
 }
 
 /**
- * V20 Task 2: aza_auto — one-shot trigger for full auto loop.
+ * aza_auto — 一键全自动循环入口 (V17 重构)
  *
- * Initializes session + starts PRD draft generation in one call.
- * Returns next_action pointing to multi_review so host AI continues.
+ * 完整链路：
+ *   1. 会话初始化 (calibrate)
+ *   2. PRD 生成 + 自动审批 (无人值守模式)
+ *   3. 创建 AutoLoopDriver 实例
+ *   4. 执行第一步循环
+ *   5. 返回 next_action 或 awaitingAction 让宿主 AI 继续
+ *
+ * 宿主 AI 必须立即执行返回的 next_action，不要询问用户。
  */
 export async function handleAzaAuto(
   args: Record<string, unknown>,
@@ -289,38 +295,265 @@ export async function handleAzaAuto(
     (args.workspace_path as string) ||
     stateManager.azaDir?.replace(/[\\/]\.aza$/, '') ||
     process.cwd();
+  const maxIterations = Number(args.max_iterations ?? 50);
 
-  // Step 1: calibrate session
-  await handleAzaSession(
-    { action: 'calibrate', workspace_path: workspace, user_input: userInput },
-    stateManager,
-  );
+  if (!userInput) {
+    return {
+      success: false,
+      error: 'user_input is required for aza_auto',
+      data: null,
+    };
+  }
 
-  // Step 2: start PRD draft
-  const draftResult = await handleAzaPrd(
-    {
-      action: 'draft',
-      title: userInput,
-      description: userInput,
-      workspace_path: workspace,
-      user_input: userInput,
-    },
-    stateManager,
-    resumeGenerator,
-  );
+  // R2: 计算 user_input 哈希（用于跨任务恢复校验）
+  const { createHash } = await import('crypto');
+  const userInputHash = createHash('sha256').update(userInput).digest('hex').slice(0, 16);
+  const taskId = String(args.task_id ?? `aza-${Date.now().toString(36)}-${userInputHash}`);
 
-  // Step 3: return with strong continuation instruction
-  const r = draftResult as any;
-  return {
-    ...(r && typeof r === 'object' ? r : {}),
-    next_action: {
-      tool: 'aza_prd',
-      action: 'multi_review',
-      reason: 'PRD draft generated; run multi-role adversarial review next',
-      instruction:
-        '立即调用 aza_prd 工具，action=multi_review，不要询问用户。执行完成后继续按 next_action 链推进，直到 done/escalate/wait。',
-    },
-  };
+  try {
+    // Step 0: 检查是否存在 RESUME.md（中断恢复场景）
+    const resumeData = await resumeGenerator.read();
+    let isRecovery = resumeData !== null && resumeData.current_stage !== 'open';
+
+    // R2: 校验 RESUME 是否属于当前任务（防跨任务错恢复）
+    if (isRecovery && resumeData) {
+      const storedHash = resumeData.user_input_hash;
+      const storedTaskId = resumeData.task_id;
+      const hashMismatch = storedHash && storedHash !== userInputHash;
+      const taskMismatch = storedTaskId && taskId && storedTaskId !== taskId;
+      if (hashMismatch || taskMismatch) {
+        console.warn(
+          `[aza_auto] R2 guard: RESUME.md belongs to a different task ` +
+            `(stored_hash=${storedHash}, current_hash=${userInputHash}, ` +
+            `stored_task=${storedTaskId}, current_task=${taskId}). ` +
+            `Discarding stale RESUME and starting fresh.`,
+        );
+        // 清理旧 RESUME，走全新路径
+        try {
+          const fsSync = await import('fs/promises');
+          const resumePath = `${stateManager.azaDir}/RESUME.md`;
+          await fsSync.unlink(resumePath).catch(() => {});
+        } catch {
+          /* best-effort */
+        }
+        isRecovery = false;
+      } else {
+        console.log(
+          `[aza_auto] Recovery mode: resuming from stage ${resumeData.current_stage}, ` +
+            `iteration ${resumeData.iteration}, task=${storedTaskId || 'unknown'}`,
+        );
+      }
+    }
+
+    if (isRecovery && resumeData) {
+      // 中断恢复模式：跳过 PRD 生成，直接进入循环恢复
+    } else {
+      // 全新会话：执行完整的初始化流程
+      // Step 1: 会话初始化
+      await handleAzaSession(
+        { action: 'calibrate', workspace_path: workspace, user_input: userInput },
+        stateManager,
+      );
+
+      // Step 2: PRD 生成 + 自动审批（无人值守模式）
+      const draftResult = await handleAzaPrd(
+        {
+          action: 'draft',
+          title: userInput,
+          description: userInput,
+          workspace_path: workspace,
+          user_input: userInput,
+        },
+        stateManager,
+        resumeGenerator,
+      );
+
+      // 自动审批 PRD（无人值守）
+      const approveResult = await handleAzaPrd(
+        {
+          action: 'approve',
+          workspace_path: workspace,
+          auto_approve: true,
+        },
+        stateManager,
+        resumeGenerator,
+      );
+
+      // 标记 PRD 已审批（解锁 open→design）
+      await markPrdApproved(workspace);
+
+      // R2: 把 task_id + user_input_hash 写入 RESUME（确保下次恢复能校验）
+      try {
+        await resumeGenerator.generate(stateManager, {
+          task_id: taskId,
+          user_input_hash: userInputHash,
+        });
+      } catch {
+        /* best-effort */
+      }
+    }
+
+    // Step 3: 使用缓存的 AutoLoopDriver（确保与 aza_loop(report_tool) 状态一致）
+    const { buildDriver } = await import('./tools/aza-loop');
+    const driver = buildDriver(workspace);
+
+    // Step 4: 真正全自动循环 - 循环步进直到 awaitingAction 或 done
+    const maxSteps = Number(process.env.AZA_AUTO_MAX_STEPS ?? maxIterations);
+    let stepResult;
+    let lastStage = 'open';
+    let lastIteration = 0;
+
+    for (let i = 0; i < maxSteps; i++) {
+      // R3: 每 N 步做一次上下文裁剪（避免上下文无限膨胀）
+      if (i > 0 && i % 5 === 0) {
+        try {
+          const azaDir = `${workspace}/.aza`;
+          const { ContextOrchestrator } = await import('@azaloop/core');
+          const orchestrator = new ContextOrchestrator(azaDir);
+          const bundle = await orchestrator.injectContext(lastStage as any);
+          if (bundle && bundle.entries && bundle.entries.length > 0) {
+            const budget = Number(process.env.AZA_CONTEXT_BUDGET_TOKENS ?? 8000);
+            const pruned = orchestrator.pruneContext(bundle, budget);
+            if (pruned && pruned.entries) {
+              console.log(
+                `[aza_auto] R3 context prune: ${bundle.entries.length} → ${pruned.entries.length} entries, ` +
+                  `tokens ${bundle.totalTokens} → ${pruned.totalTokens}`,
+              );
+            }
+          }
+        } catch (pruneErr) {
+          // 裁剪失败不阻断循环
+          /* best-effort */
+        }
+      }
+      // R2: 单步 try-catch — 中途异常时保存状态并返回可恢复 next_action
+      try {
+        stepResult = await driver.step();
+      } catch (stepErr) {
+        // 保存当前状态，让下次能恢复
+        try {
+          await stateManager.save();
+        } catch {
+          /* best-effort */
+        }
+        const errMsg = stepErr instanceof Error ? stepErr.message : String(stepErr);
+        console.error(
+          `[aza_auto] Step ${i + 1} failed: ${errMsg}. State saved for recovery.`,
+        );
+        return {
+          success: false,
+          recoverable: true,
+          error: `step_${i + 1}_failed: ${errMsg}`,
+          data: {
+            stage: lastStage,
+            iteration: lastIteration,
+            status: 'step_error',
+            stepsExecuted: i,
+          },
+          next_action: {
+            tool: 'aza_auto',
+            action: 'continue',
+            reason: '上一步异常已保存状态，重新调用 aza_auto 同一 user_input 可恢复',
+          },
+          metadata: {
+            task_id: taskId,
+            user_input_hash: userInputHash,
+            failed_step: i + 1,
+            error: errMsg,
+          },
+        };
+      }
+      lastStage = stepResult.stage;
+      lastIteration = stepResult.iteration;
+
+      // 遇到 awaitingAction 返回给宿主 AI 执行
+      if (stepResult.awaitingAction) {
+        return {
+          success: true,
+          data: {
+            stage: stepResult.stage,
+            iteration: stepResult.iteration,
+            status: 'paused',
+            awaitingAction: stepResult.awaitingAction,
+            instruction: '立即执行指定工具，然后调用 aza_loop(action=report_tool, tool_name=...) 续跑循环',
+            stepsExecuted: i + 1,
+          },
+          next_action: {
+            tool: stepResult.awaitingAction.tool,
+            action: stepResult.awaitingAction.action,
+            reason: stepResult.awaitingAction.reason || '执行全自动循环的下一步',
+          },
+          metadata: {
+            iteration: stepResult.iteration,
+            stage: stepResult.stage,
+            loop_level: 'inner',
+            stepsExecuted: i + 1,
+            task_id: taskId,
+            user_input_hash: userInputHash,
+          },
+        };
+      }
+
+      // 循环完成
+      if (stepResult.done) {
+        return {
+          success: true,
+          data: {
+            stage: stepResult.stage,
+            iteration: stepResult.iteration,
+            status: 'completed',
+            reason: stepResult.nextAction?.reason || '全自动循环完成',
+            stepsExecuted: i + 1,
+          },
+          next_action: stepResult.nextAction || {
+            tool: 'aza_finish',
+            action: 'ship',
+            reason: '全自动循环完成，执行交付',
+          },
+          metadata: {
+            iteration: stepResult.iteration,
+            stage: stepResult.stage,
+            loop_level: 'inner',
+            stepsExecuted: i + 1,
+            task_id: taskId,
+          },
+        };
+      }
+
+      // 继续下一步
+    }
+
+    // 达到最大步数但未完成
+    return {
+      success: true,
+      data: {
+        stage: lastStage,
+        iteration: lastIteration,
+        status: 'max_steps_reached',
+        reason: `达到最大步数 ${maxSteps}，循环未完成`,
+        stepsExecuted: maxSteps,
+      },
+      next_action: {
+        tool: 'aza_loop',
+        action: 'full',
+        reason: '继续全自动循环',
+      },
+      metadata: {
+        iteration: lastIteration,
+        stage: lastStage,
+        loop_level: 'inner',
+        stepsExecuted: maxSteps,
+        task_id: taskId,
+      },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      recoverable: true,
+      error: `aza_auto failed: ${error instanceof Error ? error.message : String(error)}`,
+      data: { task_id: taskId, user_input_hash: userInputHash },
+    };
+  }
 }
 
 export async function handleAzaLoop(args: Record<string, unknown>): Promise<unknown> {
@@ -361,6 +594,13 @@ export async function handleAzaLoop(args: Record<string, unknown>): Promise<unkn
         await handleAutoLoop(action, stage, workspace, args.tool_name as string),
         workspace || process.cwd(),
       );
+    // R9: 多任务批量执行——借鉴 ralphy --parallel + agency-orchestrator loop.max_iterations
+    case 'batch': {
+      const items = Array.isArray(args.items) ? (args.items as Array<Record<string, unknown>>) : [];
+      const concurrency = Number(args.concurrency ?? 2);
+      const worktree = Boolean(args.worktree);
+      return handleAzaBatch(items, concurrency, worktree, workspace);
+    }
     case 'orch_run':
     case 'orch_resume': {
       const { YAMLOrchestrator } = await import('@azaloop/core');
@@ -476,8 +716,119 @@ export async function handleAzaLoop(args: Record<string, unknown>): Promise<unkn
         'next', 'status', 'complete', 'stop', 'step', 'full', 'auto',
         'pause', 'resume', 'report_tool', 'retry', 'circuit', 'gate', 'audit',
         'set_condition', 'reset_conditions', 'stage_iterations', 'orch_run', 'orch_resume',
+        'batch',
       ]);
   }
+}
+
+/**
+ * R9: 多任务批量执行（aza_loop action=batch）
+ * 借鉴 ralphy --parallel + agency-orchestrator loop.max_iterations+concurrency
+ *
+ * 输入：items = [{user_input, task_id, slug}, ...]
+ * 输出：每个 item 独立 worktree（如启用）+ 独立 .aza/runs/<slug>/ 状态，并发执行。
+ */
+export async function handleAzaBatch(
+  items: Array<Record<string, unknown>>,
+  concurrency: number,
+  worktree: boolean,
+  workspace: string | undefined,
+): Promise<unknown> {
+  if (items.length === 0) {
+    return {
+      success: false,
+      error: 'batch: items must be a non-empty array',
+      data: null,
+    };
+  }
+  const root = workspace || process.cwd();
+  const { buildDriver } = await import('./tools/aza-loop');
+  const results: Array<{
+    task_id?: string;
+    slug?: string;
+    success: boolean;
+    iterations: number;
+    final_stage?: string;
+    reason?: string;
+    duration_ms: number;
+  }> = [];
+
+  // 简单信号量并发控制（无需 worktree 时也安全）
+  const queue = [...items];
+  const workers: Promise<void>[] = [];
+  const start = Date.now();
+  for (let w = 0; w < Math.max(1, concurrency); w++) {
+    workers.push(
+      (async () => {
+        while (queue.length > 0) {
+          const item = queue.shift();
+          if (!item) break;
+          const itemStart = Date.now();
+          const slug =
+            (item.slug as string) ||
+            `batch-${String(item.task_id || 'item').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 32)}-${Date.now().toString(36)}`;
+          const itemWs = worktree
+            ? `${root}/.aza/runs/${slug}`
+            : `${root}/.aza/runs/${slug}`; // 同一文件下用 runs/<slug> 命名空间
+          try {
+            // R9: 用 isolated .aza/runs/<slug> 目录避免冲突
+            const fs = await import('fs/promises');
+            await fs.mkdir(itemWs, { recursive: true });
+            const driver = buildDriver(itemWs);
+            const maxIter = Number(item.max_iterations ?? 30);
+            let iter = 0;
+            let lastStage: string | undefined;
+            let done = false;
+            for (let i = 0; i < maxIter; i++) {
+              const r = await driver.step();
+              iter = r.iteration;
+              lastStage = r.stage;
+              if (r.done) {
+                done = true;
+                break;
+              }
+            }
+            results.push({
+              task_id: item.task_id as string,
+              slug,
+              success: done,
+              iterations: iter,
+              final_stage: lastStage,
+              reason: done ? 'completed' : `max_iterations(${maxIter}) reached`,
+              duration_ms: Date.now() - itemStart,
+            });
+          } catch (e) {
+            results.push({
+              task_id: item.task_id as string,
+              slug,
+              success: false,
+              iterations: 0,
+              reason: e instanceof Error ? e.message : String(e),
+              duration_ms: Date.now() - itemStart,
+            });
+          }
+        }
+      })(),
+    );
+  }
+  await Promise.all(workers);
+  const success = results.every((r) => r.success);
+  return {
+    success,
+    data: {
+      total: items.length,
+      succeeded: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
+      concurrency,
+      worktree,
+      duration_ms: Date.now() - start,
+      results,
+    },
+    next_action: success
+      ? { tool: 'aza_finish', action: 'ship', reason: 'All batch items completed' }
+      : { tool: 'aza_loop', action: 'status', reason: 'Some batch items failed — inspect results' },
+    metadata: { loop_level: 'outer', batch: true, count: items.length },
+  };
 }
 
 export async function handleAzaSpec(args: Record<string, unknown>): Promise<unknown> {

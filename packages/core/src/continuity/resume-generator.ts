@@ -14,7 +14,16 @@ export interface ResumeData {
   next_tool: string;
   errors_to_avoid: string[];
   last_milestone: string;
+  /** R2: 任务 ID，跨任务恢复校验用 */
+  task_id?: string;
+  /** R2: 用户输入哈希（前 16 位），防止 RESUME 错配到不同任务 */
+  user_input_hash?: string;
+  /** R10: 引擎代际标记，跨客户端/跨版本恢复时用于识别不兼容状态 */
+  engine_version?: string;
 }
+
+/** 引擎代际标记（与 package.json 解耦，专用于跨客户端恢复校验）。 */
+export const AZALOOP_ENGINE_VERSION = '0.1.0';
 
 /**
  * A single question in the 5-Question Reboot Test.
@@ -164,6 +173,11 @@ export class ResumeGenerator {
         ? [`Stage "${stage}" is blocked — call aza_loop(reset) then aza_loop(full)`]
         : [],
       last_milestone: state.updated_at,
+      // R2: 透传 task_id + user_input_hash（若有）以便跨任务校验
+      task_id: extra?.task_id ?? safeExtra.task_id,
+      user_input_hash: extra?.user_input_hash ?? safeExtra.user_input_hash,
+      // R10: 透传 engine_version，跨客户端恢复时识别引擎代际
+      engine_version: extra?.engine_version ?? AZALOOP_ENGINE_VERSION,
       ...safeExtra,
     };
 
@@ -237,6 +251,7 @@ export class ResumeGenerator {
       `progress: ${JSON.stringify(resume.progress)}`,
       `client: ${JSON.stringify(resume.client)}`,
       `model: ${JSON.stringify(resume.model)}`,
+      `engine_version: ${JSON.stringify(resume.engine_version ?? AZALOOP_ENGINE_VERSION)}`,
       `next_tool: ${JSON.stringify(resume.next_tool)}`,
       `next_action: ${JSON.stringify(resume.next_action)}`,
       `updated_at: ${JSON.stringify(new Date().toISOString())}`,
@@ -306,6 +321,7 @@ export class ResumeGenerator {
           next_tool: data.next_tool || 'aza_loop',
           errors_to_avoid: [],
           last_milestone: data.updated_at || new Date().toISOString(),
+          engine_version: data.engine_version,
         };
       }
     }
@@ -329,6 +345,7 @@ export class ResumeGenerator {
       next_tool: data['tool'] || 'aza_loop',
       errors_to_avoid: [],
       last_milestone: new Date().toISOString(),
+      engine_version: data['engine_version'],
     };
   }
 

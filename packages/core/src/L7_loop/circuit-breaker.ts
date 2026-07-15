@@ -1,4 +1,5 @@
 import type { Stage } from './state-machine';
+import { CostTracker } from './cost-tracker';
 
 /**
  * The loop level that the circuit breaker is monitoring.
@@ -37,6 +38,29 @@ export const DEFAULT_CIRCUIT_BREAKER_CONFIG: CircuitBreakerConfig = {
   stagnationThreshold: 3,
   noProgressThreshold: 5,
 };
+
+/**
+ * R7: 错误签名归一化——把不同形式但同根因的错误折叠成一个签名。
+ * 借鉴 loop-engineering "错误签名去重" 模式：
+ *   - 去除数字、路径、引号、时间戳、UUID
+ *   - 统一空白
+ *   - 截断到 80 字符
+ * 这样 "TypeError: undefined.foo at /Users/x/y/z:123" 与
+ *      "TypeError: undefined.foo at /var/lib/w:456" 会被识别为同一签名。
+ */
+export function errorSignature(error: string): string {
+  if (!error || typeof error !== 'string') return '<empty>';
+  return error
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<uuid>') // UUID
+    .replace(/\/[^\s)]+:\d+/g, '<path>') // 文件路径:行号 (先于数字归一化)
+    .replace(/\b\d+\b/g, '<n>') // 数字
+    .replace(/['"`][^'"`]*?['"`]/g, '<str>') // 引号内容
+    .replace(/at\s+<path>/g, '') // stack 行
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80)
+    .toLowerCase() || '<empty>';
+}
 
 /**
  * Result of a circuit-breaker evaluation.
@@ -143,9 +167,10 @@ export class CircuitBreaker {
     state.consecutiveFailures++;
     state.metrics.consecutiveFailures = state.consecutiveFailures;
 
-    // Track error for stagnation detection
-    state.errorHistory.push(error);
-    // Keep last 10 errors to detect repeated patterns
+    // R7: 用 errorSignature 归一化后再存，跳过数字/路径差异
+    const signature = errorSignature(error);
+    state.errorHistory.push(signature);
+    // Keep last 10 signatures to detect repeated patterns
     if (state.errorHistory.length > 10) {
       state.errorHistory = state.errorHistory.slice(-10);
     }
@@ -321,6 +346,24 @@ export class CircuitBreaker {
       this.levels.set(level, state);
     }
     return state;
+  }
+
+  /**
+   * R7: 与 CostTracker 联动——若外部 CostTracker 报告超 budget，
+   * 即使 circuit-breaker 自身 token 维度未触发，也提前熔断。
+   */
+  attachCostTracker(tracker: CostTracker, opts?: { earlyTripRatio?: number }): void {
+    const early = opts?.earlyTripRatio ?? 0.95;
+    const original = this.recordSuccess.bind(this);
+    this.recordSuccess = (level, tokensUsed = 0) => {
+      original(level, tokensUsed);
+      const usage = tracker.getBudgetUsage();
+      const ratio = usage.budget > 0 ? usage.consumed / usage.budget : 0;
+      if (ratio >= early) {
+        // Cost 接近上限 → 在此级强制降级（coldStartRetry 信号）
+        this.break(level, { reason: `CostTracker near limit (${(ratio * 100).toFixed(1)}%)` });
+      }
+    };
   }
 }
 
