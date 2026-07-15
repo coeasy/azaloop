@@ -74,7 +74,7 @@ async function main() {
   }
 
   const tools = listTools();
-  assert(tools.length === 8, `expected 8 tools, got ${tools.length}`);
+  assert(tools.length === 9, `expected 9 tools (8+1 aza_auto), got ${tools.length}`);
   process.stderr.write(`[ok] tools/list = ${tools.map((t) => t.name).join(', ')}\n`);
 
   const binder = new DynamicBinder();
@@ -202,7 +202,7 @@ async function main() {
     JSON.stringify({
       ok: true,
       work: WORK,
-      tools: 8,
+      tools: 9,
       quality_success: quality?.success ?? null,
       orch_success: orch?.success ?? null,
       task_board: true,

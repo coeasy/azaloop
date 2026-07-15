@@ -94,6 +94,14 @@ export interface InnerLoopOptions {
    * under `<azaDir>/tasks/<taskId>/NOTES.md`. Defaults to '.aza'.
    */
   azaDir?: string;
+  /**
+   * G6: optional stage handler provider — when set, the 5 phase
+   * handlers (planner / maker / checker / optimizer / finalize) inside
+   * {@link InnerLoop.runPhase} dispatch through the same real handler
+   * chain that the outer LoopController uses. When absent, the
+   * handlers fall back to lightweight stubs (with a `console.warn`).
+   */
+  handlerProvider?: StageHandlerProvider;
 }
 
 /**
@@ -132,6 +140,13 @@ export class InnerLoop {
   private totalIterations: number = 0;
   /** v13 — P6.1: aza dir for subagent review notes. */
   private azaDir: string;
+  /**
+   * G6: optional stage handler provider. When set, the 5 phase
+   * handlers (planner/maker/checker/optimizer/finalize) inside
+   * {@link runPhase} dispatch through this provider instead of
+   * falling back to the lightweight stubs.
+   */
+  private handlerProvider: StageHandlerProvider | null = null;
 
   constructor(
     circuitBreaker?: CircuitBreaker,
@@ -145,13 +160,33 @@ export class InnerLoop {
       maxPhaseIterations: options.maxPhaseIterations ?? 5,
       dpRegistry: options.dpRegistry,
       azaDir: options.azaDir,
+      handlerProvider: options.handlerProvider,
     };
     this.azaDir = options.azaDir ?? '.aza';
+    this.handlerProvider = options.handlerProvider ?? null;
     this.stateMachine = stateMachine ?? new StateMachine();
     this.phaseLoop = new PhaseLoop(circuitBreaker, {
       maxIterations: this.options.maxPhaseIterations ?? 5,
       dpRegistry: this.options.dpRegistry,
     });
+  }
+
+  /**
+   * G6: install / replace the stage handler provider. Lets the
+   * outer LoopController share its real handler chain with the
+   * inner loop so the 5 phase handlers stay in lock-step.
+   */
+  setHandlerProvider(provider: StageHandlerProvider | null): void {
+    this.handlerProvider = provider ?? null;
+  }
+
+  /**
+   * G6: read-only accessor for the current handler provider (used
+   * by tests and for diagnostics). Returns `null` when no provider
+   * has been installed.
+   */
+  getHandlerProvider(): StageHandlerProvider | null {
+    return this.handlerProvider;
   }
 
   /**
@@ -522,6 +557,167 @@ export class InnerLoop {
    */
   getStageHistory(): StageRecord[] {
     return [...this.stageHistory];
+  }
+
+  /**
+   * Phase state-transition entry point. Routes `payload` to the appropriate
+   * phase handler based on `phase`. Unknown phases are routed through
+   * {@link InnerLoop.softRecover} so the caller always gets a structured
+   * response instead of an uncaught throw.
+   */
+  async runPhase(phase: string, payload: any): Promise<any> {
+    const validPhases = ['planner', 'maker', 'checker', 'optimizer', 'finalize'];
+    if (!validPhases.includes(phase)) {
+      return this.softRecover(payload, `unknown_phase: ${phase}`);
+    }
+    const phaseHandlers: Record<string, (p: any) => Promise<any>> = {
+      planner: (p) => this.handlePlanner(p),
+      maker: (p) => this.handleMaker(p),
+      checker: (p) => this.handleChecker(p),
+      optimizer: (p) => this.handleOptimizer(p),
+      finalize: (p) => this.handleFinalize(p),
+    };
+    try {
+      return await phaseHandlers[phase]!(payload);
+    } catch (err) {
+      return this.softRecover(payload, `${phase}_error: ${(err as Error).message}`);
+    }
+  }
+
+  // ── G6: phase handlers — prefer the shared handlerProvider when present ──
+
+  /**
+   * G6: dispatch a phase call to the appropriate real handler from
+   * the installed {@link handlerProvider}. Falls back to `null` when
+   * no provider is set so callers can keep using the stub path.
+   *
+   * The phase names are the SPARC 5-phase split used by
+   * {@link runPhase}, which do not 1:1 match the 5 pipeline stages
+   * (`open`/`design`/`build`/`verify`/`archive`). We map each phase
+   * to the closest pipeline stage so the underlying
+   * {@link StageHandlerProvider} (which expects a `Stage`) receives
+   * a well-typed argument.
+   */
+  private async runHandlerForStage(phase: string, payload: any): Promise<any | null> {
+    if (!this.handlerProvider) return null;
+    try {
+      const stageForProvider = this.phaseToStage(phase);
+      const handlers = this.handlerProvider(stageForProvider);
+      const iteration = this.totalIterations + 1;
+      const work = (payload && typeof payload === 'object' && 'work' in payload)
+        ? String((payload as { work: unknown }).work ?? '')
+        : '';
+      const rolePrompt = (payload && typeof payload === 'object' && 'rolePrompt' in payload)
+        ? String((payload as { rolePrompt: unknown }).rolePrompt ?? '')
+        : undefined;
+      const evaluation = (payload && typeof payload === 'object' && 'evaluation' in payload)
+        ? (payload as { evaluation: unknown }).evaluation
+        : undefined;
+
+      switch (phase) {
+        case 'planner': {
+          const result = await handlers.maker(stageForProvider, iteration, rolePrompt);
+          return { phase: 'planner', status: result?.status ?? 'completed', work: result?.work, payload };
+        }
+        case 'maker': {
+          const result = await handlers.maker(stageForProvider, iteration, rolePrompt);
+          return { phase: 'maker', status: result?.status ?? 'completed', work: result?.work, payload };
+        }
+        case 'checker': {
+          const result = await handlers.checker(stageForProvider, work, rolePrompt);
+          return { phase: 'checker', status: 'completed', work, payload, evaluation: result?.input, tokensUsed: result?.tokensUsed };
+        }
+        case 'optimizer': {
+          const result = await handlers.optimizer(stageForProvider, work, evaluation as any);
+          return { phase: 'optimizer', status: 'completed', work: result?.work, payload, tokensUsed: result?.tokensUsed };
+        }
+        case 'finalize': {
+          // finalize has no direct counterpart in StageHandlers; reuse
+          // checker to produce the final attestation payload.
+          const result = await handlers.checker(stageForProvider, work, rolePrompt);
+          return { phase: 'finalize', status: 'completed', work, payload, evaluation: result?.input, tokensUsed: result?.tokensUsed };
+        }
+        default:
+          return null;
+      }
+    } catch {
+      // best-effort: handler dispatch is non-fatal, callers can retry
+      // or fall back to the stub.
+      return null;
+    }
+  }
+
+  /**
+   * G6: map a {@link runPhase} phase name to the closest pipeline
+   * `Stage` so we can dispatch through {@link StageHandlerProvider}.
+   * Unknown phases fall back to the current stage (or `design` when
+   * the state machine is empty).
+   */
+  private phaseToStage(phase: string): Stage {
+    switch (phase) {
+      case 'planner':
+        return 'design';
+      case 'maker':
+        return 'build';
+      case 'checker':
+        return 'verify';
+      case 'optimizer':
+        return 'build';
+      case 'finalize':
+        return 'archive';
+      default: {
+        const current = this.stateMachine.getCurrentStage();
+        return current ?? 'design';
+      }
+    }
+  }
+
+  // TODO: wire the planner phase to the planning LLM / tool call.
+  private async handlePlanner(payload: any): Promise<any> {
+    const handled = await this.runHandlerForStage('planner', payload);
+    if (handled) return handled;
+    console.warn('[InnerLoop] handlePlanner: no handlerProvider installed, using stub');
+    return { phase: 'planner', status: 'completed', payload };
+  }
+
+  // TODO: wire the maker phase to the maker LLM / tool call.
+  private async handleMaker(payload: any): Promise<any> {
+    const handled = await this.runHandlerForStage('maker', payload);
+    if (handled) return handled;
+    console.warn('[InnerLoop] handleMaker: no handlerProvider installed, using stub');
+    return { phase: 'maker', status: 'completed', payload };
+  }
+
+  // TODO: wire the checker phase to the gate evaluation pipeline.
+  private async handleChecker(payload: any): Promise<any> {
+    const handled = await this.runHandlerForStage('checker', payload);
+    if (handled) return handled;
+    console.warn('[InnerLoop] handleChecker: no handlerProvider installed, using stub');
+    return { phase: 'checker', status: 'completed', payload };
+  }
+
+  // TODO: wire the optimizer phase to the optimizer LLM / tool call.
+  private async handleOptimizer(payload: any): Promise<any> {
+    const handled = await this.runHandlerForStage('optimizer', payload);
+    if (handled) return handled;
+    console.warn('[InnerLoop] handleOptimizer: no handlerProvider installed, using stub');
+    return { phase: 'optimizer', status: 'completed', payload };
+  }
+
+  // TODO: wire the finalize phase to the completion / handoff step.
+  private async handleFinalize(payload: any): Promise<any> {
+    const handled = await this.runHandlerForStage('finalize', payload);
+    if (handled) return handled;
+    console.warn('[InnerLoop] handleFinalize: no handlerProvider installed, using stub');
+    return { phase: 'finalize', status: 'completed', payload };
+  }
+
+  /**
+   * Soft-recover from an unknown phase or phase-level error by returning
+   * a structured result instead of throwing. Keeps the inner loop moving.
+   */
+  private async softRecover(payload: any, reason: string): Promise<any> {
+    return { phase: 'soft-recover', status: 'recovered', reason, payload };
   }
 
   // ── private helpers ──

@@ -13,6 +13,7 @@ import { PRDGenerator, type PRDGenerationInput } from '../L1_spec/prd-generator'
 import { PRDSchema, type PRD } from '@azaloop/shared';
 import { writeConventions, loadConventions, extractConventionsFromTask, type ConventionsEntry } from './learn-from-task';
 import type { ContextEntryBundle } from '../L2_memory/context-orchestrator';
+import { FileHandoff } from '../L2_memory/file-handoff';
 
 export interface RealHandlersOptions {
   /** Working directory where the host (LLM) writes project artifacts. */
@@ -25,6 +26,8 @@ export interface RealHandlersOptions {
   contextBundle?: ContextEntryBundle | null;
   /** Knowledge entries from InjectionEngine — injected into maker/checker for stage knowledge. */
   knowledgeEntries?: string[];
+  /** File handoff mechanism for passing artifacts between stages. */
+  fileHandoff?: FileHandoff;
 }
 
 function resolveAzaDir(opts?: RealHandlersOptions): string {
@@ -312,6 +315,20 @@ function createRealMaker(opts?: RealHandlersOptions): MakerFn {
         }
       } else if (stage === 'build') {
         if (hasBuildCompleteMarker(azaDir) || detectOpenSpecTasksComplete(workDir)) {
+          // Maker 完成 build 阶段，通过 file-handoff 写入报告
+          if (opts?.fileHandoff) {
+            try {
+              const scanResult = scanSourceFiles(workDir);
+              const testResult = scanTestResults(workDir);
+              await opts.fileHandoff.writeReport('build', {
+                sourceFiles: scanResult,
+                testResults: testResult,
+                timestamp: new Date().toISOString(),
+              });
+            } catch {
+              // best-effort: file handoff 失败不阻塞主流程
+            }
+          }
           return {
             work: 'Build complete: OpenSpec tasks checked or build-complete.marker present',
             tokensUsed: 200,
@@ -415,6 +432,16 @@ function createRealChecker(opts?: RealHandlersOptions): CheckerFn {
       input.openspec_design_ready = openspec.ready;
       input.design_review_passed = fs.existsSync(designMd) || openspec.ready;
     } else if (stage === 'build') {
+      // Checker 启动时读取上游产物（只读 report.json，不读 Maker 上下文）
+      let buildReport: any = null;
+      if (opts?.fileHandoff) {
+        try {
+          buildReport = await opts.fileHandoff.readHandoff('build');
+        } catch {
+          // best-effort: 读取失败不影响后续检查
+        }
+      }
+
       // Check if tsc/vitest already cached for this workDir
       const tscCacheKey = `tsc:${workDir}`;
       let tscResult: { ok: boolean; out: string };

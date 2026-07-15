@@ -3,6 +3,7 @@ import { ResumeGenerator } from './resume-generator';
 import { ProjectMemory } from '../L2_memory/project-memory';
 import { LongTermMemory } from '../L2_memory/long-term-memory';
 import { SessionCatchup } from '../L2_memory/session-catchup';
+import { RunLedger } from '../state/run-ledger';
 
 export interface CatchupResult {
   state_restored: boolean;
@@ -28,6 +29,7 @@ export class CatchupProtocol {
   private projectMemory: ProjectMemory;
   private longTermMemory: LongTermMemory;
   private sessionCatchup: SessionCatchup;
+  private runLedger: RunLedger;
 
   constructor(
     stateManager: StateManager,
@@ -40,23 +42,35 @@ export class CatchupProtocol {
     this.projectMemory = projectMemory;
     this.longTermMemory = longTermMemory;
     this.sessionCatchup = new SessionCatchup(stateManager, projectMemory, longTermMemory);
+    const azaDir = (stateManager as any).azaDir || '.aza';
+    this.runLedger = new RunLedger(azaDir);
   }
 
   async run(): Promise<CatchupResult> {
+    // 优先读 run-ledger 的 getRecoveryPoint()
+    await this.runLedger.load();
+    const recoveryPoint = this.runLedger.getRecoveryPoint();
+
     const resume = await this.resumeGenerator.read();
     const state = this.stateManager.getState();
     const catchupSummary = await this.sessionCatchup.catchup();
+
+    // 若有恢复点，用 summarizeSince() 重建上下文摘要
+    let ledgerSummary = '';
+    if (recoveryPoint && recoveryPoint.iteration) {
+      ledgerSummary = this.runLedger.summarizeSince(recoveryPoint.iteration);
+    }
 
     return {
       state_restored: state.pipeline.current_stage !== 'open' || state.loop.iteration > 0,
       resume_found: resume !== null,
       memories_loaded: catchupSummary.recent_memories > 0,
-      catchup_summary: this.generateSummary(catchupSummary, resume),
+      catchup_summary: this.generateSummary(catchupSummary, resume, ledgerSummary, recoveryPoint),
       errors_to_avoid: catchupSummary.errors_to_avoid,
     };
   }
 
-  private generateSummary(catchup: any, resume: any): string {
+  private generateSummary(catchup: any, resume: any, ledgerSummary: string, recoveryPoint: any): string {
     const lines = [
       '# Session Catch-up Protocol',
       '',
@@ -67,6 +81,18 @@ export class CatchupProtocol {
       `Progress: ${catchup.progress}`,
       '',
     ];
+
+    // 追加 run-ledger 恢复信息
+    if (recoveryPoint) {
+      lines.push(
+        '## Run Ledger Recovery',
+        '',
+        `Recovery point: iteration ${recoveryPoint.iteration ?? 'unknown'}, tool ${recoveryPoint.tool}`,
+        ledgerSummary,
+        '',
+      );
+    }
+
     return lines.join('\n');
   }
 }

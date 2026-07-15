@@ -269,19 +269,32 @@ export class SkillRegistry {
     const now = new Date().toISOString();
     const core: SkillMeta[] = [
       {
-        name: 'prd', version: '1.1.0', type: 'document',
-        description: 'Use when the user wants to turn an idea into a structured PRD before any code is written — drives a HARD-GATE that blocks all build-stage tools until approval.',
-        tags: ['prd', 'spec', 'requirements'],
+        name: 'prd', version: '2.0.0', type: 'document',
+        description: 'Use when the user wants to turn an idea into a structured PRD before any code is written — drives a HARD-GATE that blocks all build-stage tools until approval. V2.0: 14章节模板 + 产品定型 + 多步LLM交互 + 量化评分。',
+        tags: ['prd', 'spec', 'requirements', '14-chapter', 'product-typing', 'multi-role-review'],
         when_to_use: 'the user wants to turn an idea into a structured PRD before any code is written',
         red_flags: [
           { thought: 'This is too simple to need a design.', reality: 'Simple features ship as 5-step builds; skipping the spec ships 3 of them wrong.' },
           { thought: 'I already know what to build, let me start.', reality: 'You are projecting; the user has not committed to a plan.' },
           { thought: 'The user said "just code it".', reality: 'That is a request for speed, not a waiver of the contract.' },
+          { thought: 'PRD quality can be checked later.', reality: 'Quality gate must pass before approval; later means never.' },
         ],
         requires_approval: true,
-        namespaces: ['aza-prd', 'aza-spec'],
+        namespaces: ['aza-prd', 'aza-spec', 'aza-quality'],
         smoke_test: { command: 'pnpm vitest run tests/unit/prd-review-gate.test.ts', expected: 'passed' },
         task_sources: ['md', 'aza-prd', 'openspec-change'],
+        body_sections: ['Overview', 'When to Use', 'Process', 'Examples', 'Rationalizations', 'Red Flags', 'Verification'],
+        quick_reference: [
+          { key: 'product_typing', value: '商业化×业务/工具/交易/基础服务 — 4 种差异化模板' },
+          { key: '14_chapter_template', value: 'L3/L4 复杂度强制 14 章节（详见 templates/14-chapter-detailed-guide.md）' },
+          { key: 'multi_step_interaction', value: 'draft → multi_review → refine → approve（V20 多步 LLM 交互）' },
+          { key: 'quality_dimensions', value: '4 维度量化评分：完整性30 + 清晰度35 + 风险20 + 可测试15' },
+          { key: '54_checklist_items', value: '结构化检查 54 项（completeness/clarity/risk/testability）' },
+          { key: '24_anti_patterns', value: '反模式检测 24 项（结构/内容/逻辑/表述）' },
+          { key: '4_role_review', value: 'CEO/QA/Eng/Design 4 角色对抗式审查' },
+          { key: 'todolist_generation', value: 'PRD 通过后自动生成 todolist.json + todolist.md' },
+        ],
+        related_skills: ['arch', 'db', 'api', 'test', 'review', 'security'],
         language: 'both', author: 'azaloop-core', registered_at: now,
       } as any,
       {

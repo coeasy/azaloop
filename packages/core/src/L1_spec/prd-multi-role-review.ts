@@ -23,8 +23,27 @@ import {
   type ReviewFinding,
   type MultiRoleReviewResponse,
 } from './prd-llm-prompts';
+import {
+  getAdversarialReviewPrompts,
+  reconcileAdversarialFindings,
+  shouldEscalate,
+  type AdversarialFinding,
+} from './adversarial-review-prompts';
+import { writeHandoff } from '../L2_memory/file-handoff';
 
 export type ReviewRole = 'ceo' | 'qa' | 'eng' | 'design';
+
+/**
+ * V20: Optional options for {@link runMultiRolePrdReview}.
+ *
+ * `azaDir` enables best-effort file handoff: each role's findings are
+ * written to `<azaDir>/handoffs/<role>_to_integration_<ts>.json` so
+ * downstream integration roles can pick up the structured review output
+ * without re-deriving it from the LLM response.
+ */
+export interface RunMultiRolePrdReviewOptions {
+  azaDir?: string;
+}
 
 export interface RoleFinding {
   role: ReviewRole;
@@ -46,16 +65,45 @@ export interface MultiRoleReviewResult {
 /**
  * V20: Get the 4-role adversarial review prompts for the host LLM.
  *
+ * For L1 complexity: returns single-round prompts (fast pre-check).
+ * For L2+ complexity: returns 3-round adversarial prompts per role.
+ *
  * Returns prompts for CEO/QA/Eng/Design perspectives. The host LLM
  * executes each prompt and returns findings which are then parsed by
- * parseMultiRoleReviewResponses().
+ * parseMultiRoleReviewResponses() or runAdversarialReview().
  */
-export function getMultiRoleReviewPrompts(prd: PRD): {
+export function getMultiRoleReviewPrompts(
+  prd: PRD,
+  complexity?: string,
+): {
   ceo_prompt: string;
   qa_prompt: string;
   eng_prompt: string;
   design_prompt: string;
+  /** Present only for L2+ complexity. Contains 3 rounds per role. */
+  adversarialRounds?: Record<ReviewRole, Array<{ round: 1 | 2 | 3; prompt: string }>>;
 } {
+  const roles: ReviewRole[] = ['ceo', 'qa', 'eng', 'design'];
+
+  if (complexity && complexity !== 'L1') {
+    // L2+ complexity: 3-round adversarial review
+    const adversarialRounds = {} as Record<ReviewRole, Array<{ round: 1 | 2 | 3; prompt: string }>>;
+    for (const role of roles) {
+      const result = getAdversarialReviewPrompts(prd, role);
+      adversarialRounds[role] = result.rounds;
+    }
+
+    // Use round 1 prompts as the top-level role prompts for backward compat
+    return {
+      ceo_prompt: adversarialRounds.ceo[0]?.prompt ?? '',
+      qa_prompt: adversarialRounds.qa[0]?.prompt ?? '',
+      eng_prompt: adversarialRounds.eng[0]?.prompt ?? '',
+      design_prompt: adversarialRounds.design[0]?.prompt ?? '',
+      adversarialRounds,
+    };
+  }
+
+  // L1 complexity (default): single-round fast pre-check
   return {
     ceo_prompt: PRD_CEO_REVIEW_PROMPT(prd),
     qa_prompt: PRD_QA_REVIEW_PROMPT(prd),
@@ -185,6 +233,75 @@ export function checkDoubtTheater(
   return detectDoubtTheater(adapted);
 }
 
+/**
+ * V20: Run adversarial review across 3 rounds for L2+ complexity.
+ *
+ * Parses host LLM multi-round responses, reconciles findings across rounds,
+ * and determines whether to escalate based on unresolved P0/P1 issues.
+ */
+export function runAdversarialReview(
+  prd: PRD,
+  hostLlmResponses: Array<{ round: number; role: ReviewRole; response: string }>,
+): MultiRoleReviewResult & { escalate?: boolean } {
+  const allAdversarialFindings: AdversarialFinding[] = [];
+
+  // Parse responses from all rounds
+  for (const { round, role, response } of hostLlmResponses) {
+    const parsed = parseSingleRoleResponse(response, role);
+    const adversarialFindings: AdversarialFinding[] = parsed.map((f) => ({
+      round: round as 1 | 2 | 3,
+      role: f.role,
+      severity: f.severity,
+      message: f.message,
+      passed: f.passed,
+      actionable: f.severity !== 'info',
+    }));
+    allAdversarialFindings.push(...adversarialFindings);
+  }
+
+  // Reconcile findings across rounds (only round 3 P0/P1 count)
+  const { reconciled, dropped, escalate } = reconcileAdversarialFindings(allAdversarialFindings);
+
+  // Convert reconciled findings to RoleFinding format
+  const reconciledRoleFindings: RoleFinding[] = reconciled.map((f) => ({
+    role: f.role,
+    severity: f.severity,
+    message: f.message,
+    passed: f.passed,
+  }));
+
+  // Calculate score and pass status
+  const p0Fail = reconciledRoleFindings.filter((f) => !f.passed && f.severity === 'P0').length;
+  const p1Fail = reconciledRoleFindings.filter((f) => !f.passed && f.severity === 'P1').length;
+  const total = reconciledRoleFindings.length || 1;
+  const passedCount = reconciledRoleFindings.filter((f) => f.passed).length;
+  const score = Math.max(0, Math.round((passedCount / total) * 100) - p0Fail * 15 - p1Fail * 5);
+  const passed = p0Fail === 0;
+
+  // Build history for shouldEscalate check
+  const roundHistory = [1, 2, 3].map((round) => ({
+    round,
+    findings: allAdversarialFindings
+      .filter((f) => f.round === round)
+      .map((f) => ({
+        ...f,
+      })) as AdversarialFinding[],
+  }));
+
+  const needsEscalation = escalate || shouldEscalate(roundHistory);
+
+  return {
+    roles: ['ceo', 'qa', 'eng', 'design'],
+    findings: reconciledRoleFindings,
+    passed,
+    score,
+    summary: passed
+      ? `Adversarial review PASS (score ${score}) — CEO/QA/Eng/Design aligned after 3 rounds`
+      : `Adversarial review FAIL — ${p0Fail} P0 / ${p1Fail} P1 findings remain after 3 rounds`,
+    escalate: needsEscalation,
+  };
+}
+
 // ── Legacy regex-based review (L1 fast mode) ──
 
 function reviewCeo(prd: PRD): RoleFinding[] {
@@ -281,7 +398,10 @@ function reviewDesign(prd: PRD): RoleFinding[] {
 }
 
 /** Run CEO/QA/Eng/Design review; all P0 must pass. (L1 fast mode — regex-based) */
-export function runMultiRolePrdReview(prd: PRD): MultiRoleReviewResult {
+export function runMultiRolePrdReview(
+  prd: PRD,
+  options?: RunMultiRolePrdReviewOptions,
+): MultiRoleReviewResult {
   const findings = [...reviewCeo(prd), ...reviewQa(prd), ...reviewEng(prd), ...reviewDesign(prd)];
   const p0Fail = findings.filter((f) => !f.passed && f.severity === 'P0').length;
   const p1Fail = findings.filter((f) => !f.passed && f.severity === 'P1').length;
@@ -289,7 +409,7 @@ export function runMultiRolePrdReview(prd: PRD): MultiRoleReviewResult {
   const passedCount = findings.filter((f) => f.passed).length;
   const score = Math.max(0, Math.round((passedCount / total) * 100) - p0Fail * 15 - p1Fail * 5);
   const passed = p0Fail === 0;
-  return {
+  const result: MultiRoleReviewResult = {
     roles: ['ceo', 'qa', 'eng', 'design'],
     findings,
     passed,
@@ -298,4 +418,36 @@ export function runMultiRolePrdReview(prd: PRD): MultiRoleReviewResult {
       ? `Multi-role review PASS (score ${score}) — CEO/QA/Eng/Design aligned`
       : `Multi-role review FAIL — ${p0Fail} P0 / ${p1Fail} P1 findings`,
   };
+
+  // G2: best-effort file handoff — when an `azaDir` is provided,
+  // write one handoff per role so the integration step can pick up
+  // the structured findings without re-parsing the LLM response.
+  if (options?.azaDir) {
+    try {
+      for (const role of result.roles) {
+        const roleFindings = result.findings.filter((f) => f.role === role);
+        if (roleFindings.length === 0) continue;
+        try {
+          // writeHandoff is async; fire-and-forget with .catch so a
+          // sync function can still trigger the write without
+          // awaiting on the hot path.
+          void writeHandoff(options.azaDir!, {
+            from_role: role,
+            to_role: 'integration',
+            artifact: 'findings',
+            data: roleFindings,
+            timestamp: new Date().toISOString(),
+          }).catch(() => {
+            // best-effort: handoff failure is non-fatal
+          });
+        } catch {
+          // best-effort: handoff failure is non-fatal
+        }
+      }
+    } catch {
+      // best-effort: outer guard so a single bad role never breaks the review
+    }
+  }
+
+  return result;
 }

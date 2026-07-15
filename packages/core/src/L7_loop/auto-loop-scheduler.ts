@@ -25,6 +25,7 @@
 import { LoopController } from './loop-controller';
 import type { LoopResponse, NextAction } from '@azaloop/shared';
 import type { Stage } from './state-machine';
+import type { DaemonState } from './daemon-state';
 
 // ── Types ──
 
@@ -78,7 +79,7 @@ export class AutoLoopScheduler {
   private startedAt: string | null = null;
   private pollIntervalMs: number;
 
-  /** V17: awaiting_agent 超时（毫秒），默认 5 分钟 */
+  /** V17: awaiting_agent 超时（毫秒），V20 Task 3 默认 30 分钟 */
   private awaitingTimeoutMs: number;
   /** V17: 进入 awaiting_agent 的时间戳，用于超时检测 */
   private awaitingSince: number | null = null;
@@ -87,11 +88,20 @@ export class AutoLoopScheduler {
   private toolExecutedFlag: boolean = false;
   private toolExecutedName: string | null = null;
 
+  /** V20 Task 3: cron schedule expression (every-N-minutes form). */
+  private cronSchedule: string | null = null;
+  /** V20 Task 3: parsed cron interval in milliseconds. */
+  private cronIntervalMs: number | null = null;
+  /** V20 Task 3: max daemon duration in ms (default 12h). */
+  private maxDurationMs: number = 12 * 60 * 60 * 1000;
+  /** V20 Task 3: when set, tick() persists state to this file. */
+  private stateFilePath: string | null = null;
+
   constructor(
     loopController: LoopController,
     callbacks: SchedulerCallbacks = {},
     pollIntervalMs: number = 1000,
-    awaitingTimeoutMs: number = 300_000, // 5 分钟
+    awaitingTimeoutMs: number = 1_800_000, // 30 分钟 (V20 Task 3)
   ) {
     this.loopController = loopController;
     this.callbacks = callbacks;
@@ -232,6 +242,80 @@ export class AutoLoopScheduler {
     return true;
   }
 
+  /**
+   * V20 Task 3: Set the daemon state file path. When set, tick() persists
+   * state to this file at the end of each tick for crash recovery.
+   */
+  setStateFilePath(filePath: string): void {
+    this.stateFilePath = filePath;
+  }
+
+  /**
+   * V20 Task 3: Set a cron schedule for periodic triggering.
+   * Simple cron parser supporting the every-N-minutes form.
+   */
+  setCronSchedule(cronExpr: string): void {
+    this.cronSchedule = cronExpr;
+    // Parse simple cron expressions
+    const match = cronExpr.match(/^\*\/(\d+)\s+(\*)\s+(\*)\s+(\*)\s+(\*)$/);
+    if (match) {
+      const interval = parseInt(match[1]!, 10);
+      this.cronIntervalMs = interval * 60 * 1000;
+    } else {
+      // Default to 2 hours if unparseable
+      this.cronIntervalMs = 2 * 60 * 60 * 1000;
+    }
+  }
+
+  /**
+   * V20 Task 3: Set the max daemon duration in milliseconds.
+   */
+  setMaxDurationMs(ms: number): void {
+    this.maxDurationMs = ms;
+  }
+
+  /**
+   * V20 Task 3: Persist scheduler state to a daemon-state.json file.
+   * Reads existing state to preserve startedAt/stopped/crashRecoveryCount.
+   */
+  async persistState(filePath: string): Promise<void> {
+    const { saveDaemonState, createInitialDaemonState } = await import('./daemon-state');
+    const fs = await import('fs/promises');
+    let state: DaemonState;
+    try {
+      const raw = await fs.readFile(filePath, 'utf8');
+      state = JSON.parse(raw) as DaemonState;
+    } catch {
+      state = createInitialDaemonState(this.maxDurationMs, this.cronSchedule);
+    }
+    state.lastTickAt = new Date().toISOString();
+    state.iteration = this.iteration;
+    state.currentStage = this.currentStage;
+    state.awaitingAction = this.awaitingAction
+      ? { tool: this.awaitingAction.tool, action: String(this.awaitingAction.action ?? '') }
+      : null;
+    state.cronSchedule = this.cronSchedule;
+    state.maxDurationMs = this.maxDurationMs;
+    await saveDaemonState(filePath, state);
+  }
+
+  /**
+   * V20 Task 3: Load scheduler state from a daemon-state.json file.
+   * Used on restart to resume from the last known state.
+   */
+  async loadState(filePath: string): Promise<void> {
+    const { loadDaemonState } = await import('./daemon-state');
+    const state = await loadDaemonState(filePath);
+    if (state) {
+      this.iteration = state.iteration;
+      this.currentStage = state.currentStage;
+      this.awaitingAction = state.awaitingAction
+        ? { tool: state.awaitingAction.tool, action: state.awaitingAction.action, reason: 'restored from daemon state' }
+        : null;
+      // crashRecoveryCount is informational — logged but not acted on here
+    }
+  }
+
   // ── Private ──
 
   private async tick(): Promise<void> {
@@ -333,6 +417,15 @@ export class AutoLoopScheduler {
         await this.callbacks.onStateSync?.();
       } catch {
         // best-effort
+      }
+
+      // V20 Task 3: persist daemon state at end of each tick (if state file configured)
+      if (this.stateFilePath) {
+        try {
+          await this.persistState(this.stateFilePath);
+        } catch {
+          // best-effort: persistence failures must not break the loop
+        }
       }
 
     } catch (err) {

@@ -20,6 +20,9 @@
 
 import { LoopController } from './loop-controller';
 import { detectSentinel, type SentinelMatch } from './completion-sentinel';
+import { syncTaskBoardFromResume } from '../L2_memory/task-board';
+import * as fs from 'fs';
+import * as path from 'path';
 import type { LoopResponse, NextAction } from '@azaloop/shared';
 import type { Stage } from './state-machine';
 
@@ -250,6 +253,21 @@ export class AutoLoopDriver {
     }
 
     this.status = 'running';
+
+    // G3: When a `.aza/resume.json` is present, sync it into the
+    // structured task-board snapshot so downstream consumers see the
+    // latest resume state. Best-effort — never blocks the loop.
+    try {
+      const azaDir = this.loopController.configLoopOptions.azaDir;
+      if (azaDir) {
+        const resumePath = path.join(azaDir, 'resume.json');
+        if (fs.existsSync(resumePath)) {
+          await syncTaskBoardFromResume(azaDir, resumePath);
+        }
+      }
+    } catch {
+      // best-effort: task-board sync failure is non-fatal
+    }
 
     // 1. Call loopController.next() to get the next action
     const result = await this.loopController.next(this.currentStage);

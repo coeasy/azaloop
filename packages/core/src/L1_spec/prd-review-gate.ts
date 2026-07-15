@@ -9,6 +9,7 @@ import {
   runCompetitiveResearch,
   writePrdMarkdown,
 } from './github-competitive-research';
+import { PRD_REFINE_SELF_CHECK_PROMPT } from './prd-llm-prompts';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -35,6 +36,8 @@ export interface PRDReviewResult {
   workspace_path?: string;
   /** CEO/QA/Eng multi-role review (P3-2) */
   multi_role?: import('./prd-multi-role-review').MultiRoleReviewResult;
+  /** V22 — A1: Quantitative quality gate result (PrdQualityGate evaluation). */
+  gate?: import('./prd-quality-gate').QualityGateResult;
   /** Competitive research summary surfaced to the host (default + visible). */
   competitive?: {
     source: string;
@@ -162,12 +165,15 @@ export class PRDReviewGate {
     }
 
     // 1. 生成 PRD（带自优化）
+    let complexity = input.complexity || this.prdGenerator.inferComplexity(input.description || input.title);
+    const enable14 = input.force_14chapters ?? (complexity === 'L3' || complexity === 'L4');
+
     let prd = this.prdGenerator.generate(input, {
       enable_self_optimization: true,
       max_optimization_rounds: 5,
       auto_stories: true,
       auto_architecture: true,
-      enable_14chapters: false,
+      enable_14chapters: enable14,
     });
 
     if (research) {
@@ -245,7 +251,7 @@ export class PRDReviewGate {
     }
 
     // 3. 提取展示信息
-    const complexity = (prd as any)._complexity || 'L2';
+    complexity = (prd as any)._complexity || 'L2';
     const mermaid = prd.architecture[0]?.mermaid || 'graph TD\n  A[需求] --> B[PRD] --> C[设计] --> D[实现] --> E[验证] --> F[交付]';
 
     // T25 — HARD-GATE detection. Any `requires_approval: true` skill
@@ -303,6 +309,45 @@ export class PRDReviewGate {
       writable: false,
       configurable: false,
     });
+
+    // A1 — 集成 PrdQualityGate：量化评分 + 门禁
+    try {
+      const { evaluatePrdQuality } = await import('./prd-quality-gate');
+      const gateResult = evaluatePrdQuality(prd, (multiRole as any)?.findings ? (multiRole as any) : undefined);
+      Object.defineProperty(result, 'gate', {
+        value: gateResult,
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      });
+      // 持久化门禁报告
+      try {
+        fs.mkdirSync(azaDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(azaDir, 'prd-gate-report.json'),
+          JSON.stringify(gateResult, null, 2),
+          'utf8',
+        );
+        if (!(globalThis as any).__AZA_QUIET__) {
+          console.warn(`[AzaLoop][A1] PrdQualityGate: score=${gateResult.score}, grade=${gateResult.grade}, passed=${gateResult.passed}, blockers=${gateResult.blockers.length}`);
+        }
+      } catch (e) {
+        if (!(globalThis as any).__AZA_QUIET__) console.warn('[AzaLoop][A1] gate-report persist failed:', (e as Error).message);
+      }
+    } catch (e) {
+      if (!(globalThis as any).__AZA_QUIET__) console.warn('[AzaLoop][A1] PrdQualityGate evaluation failed:', (e as Error).message);
+    }
+
+    // A2 — todolist 生成（review 路径）
+    try {
+      await this.generateAndPersistTodolist(prd, azaDir);
+      if (!(globalThis as any).__AZA_QUIET__) console.warn(`[AzaLoop][A2] todolist generated: ${azaDir}/todolist.json`);
+    } catch (e) {
+      if (!(globalThis as any).__AZA_QUIET__) console.warn('[AzaLoop][A2] todolist generation failed:', (e as Error).message);
+    }
+
+    // A2 — todolist 在 review() 路径也生成（已在上方带日志调用）
+    // （重复调用已合并）
 
     this.pendingReview = result;
     return result;
@@ -802,6 +847,24 @@ export class PRDReviewGate {
 
     // If passes, stash as pendingReview and point to approve
     if (checkResult.passed) {
+      // A2 — 生成 TodoList（抽离到 generateAndPersistTodolist）
+      const azaDirForTodolist = this.stateManager.azaDir ?? '.aza';
+      this.generateAndPersistTodolist(parsed, azaDirForTodolist);
+
+      // A3 — 拼接 PRD_REFINE_SELF_CHECK_PROMPT 自检清单摘要
+      let selfCheckSummary = '';
+      try {
+        const fullPrompt = PRD_REFINE_SELF_CHECK_PROMPT('{}', [], []);
+        const match = fullPrompt.match(/## 自检清单[\s\S]*?(?=\n## |\s*$)/);
+        if (match && match[0]) {
+          selfCheckSummary = match[0].slice(0, 500);
+        }
+      } catch { /* best-effort */ }
+      const baseInstruction = `PRD 已通过审查（评分 ${checkResult.score}/100），调用 aza_prd(action=approve) 进入循环`;
+      const finalInstruction = selfCheckSummary
+        ? `${baseInstruction.split('，')[0]}（评分 ${checkResult.score}/100）。在调用 approve() 前，请宿主 LLM 先执行自检：\n\n${selfCheckSummary}`
+        : baseInstruction;
+
       const result: PRDReviewResult = {
         prd_id: parsed.id,
         title: parsed.title,
@@ -834,7 +897,7 @@ export class PRDReviewGate {
           tool: 'aza_prd',
           action: 'approve',
           reason: `PRD refined (score ${checkResult.score}/100); ready to approve`,
-          instruction: 'PRD 已通过审查，调用 aza_prd(action=approve) 进入循环',
+          instruction: finalInstruction,
         },
       };
     }
@@ -858,6 +921,36 @@ export class PRDReviewGate {
   }
 
   // ── 私有辅助方法 ──
+
+  /**
+   * A2 — Generate a TodoList from the given PRD and persist it under
+   * `<azaDir>/todolist.json` + `<azaDir>/todolist.md`.
+   *
+   * Best-effort: any failure (import error, write error, generator
+   * throw) is swallowed silently so callers can invoke this method
+   * without defensive try/catch wrappers.
+   */
+  private async generateAndPersistTodolist(prd: PRD, azaDir: string): Promise<void> {
+    try {
+      const { generatePrdTodolist } = await import('./prd-todolist-generator');
+      const todolist = generatePrdTodolist(prd);
+      fs.mkdirSync(azaDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(azaDir, 'todolist.json'),
+        JSON.stringify(todolist, null, 2),
+        'utf8',
+      );
+      // 同时生成 markdown 版本
+      const todolistMd = this.formatTodolistMarkdown(todolist);
+      fs.writeFileSync(
+        path.join(azaDir, 'todolist.md'),
+        todolistMd,
+        'utf8',
+      );
+    } catch {
+      /* best-effort */
+    }
+  }
 
   /**
    * Convert a PRD title into a URL-safe slug for the OpenSpec change folder.
@@ -922,6 +1015,64 @@ export class PRDReviewGate {
     const goals = Array.isArray(prd?.goals) ? prd.goals.slice(0, 4).join('; ') : '';
     const overview = typeof prd?.overview === 'string' ? prd.overview.split('\n').slice(0, 6).join(' ') : '';
     return `${title}: ${goals || overview}`.replace(/\s+/g, ' ').trim().slice(0, 800);
+  }
+
+  private formatTodolistMarkdown(todolist: import('./prd-todolist-generator').TodoList): string {
+    const lines: string[] = [
+      `# ${todolist.title} - 执行任务清单`,
+      '',
+      `**PRD ID**: ${todolist.prd_id}`,
+      `**创建时间**: ${todolist.created_at}`,
+      `**总任务数**: ${todolist.total_items}`,
+      '',
+      `## 摘要`,
+      `- P0 任务: ${todolist.summary.p0_count} 个`,
+      `- P1 任务: ${todolist.summary.p1_count} 个`,
+      `- P2 任务: ${todolist.summary.p2_count} 个`,
+      `- 并行组数: ${todolist.summary.parallel_groups}`,
+      '',
+      `## 关键路径`,
+      ...todolist.summary.critical_path.map(id => `- ${id}`),
+      '',
+      `## 任务列表`,
+      '',
+    ];
+
+    for (const item of todolist.items) {
+      const statusIcon = {
+        pending: '⬜',
+        in_progress: '🟨',
+        done: '✅',
+        blocked: '🚫',
+      }[item.status];
+
+      lines.push(`### ${statusIcon} ${item.id}: ${item.title}`);
+      lines.push('');
+      lines.push(`**优先级**: ${item.priority} | **工作量**: ${item.estimated_effort} | **状态**: ${item.status}`);
+      lines.push('');
+      lines.push(item.description);
+      lines.push('');
+
+      if (item.acceptance_criteria.length > 0) {
+        lines.push('**验收标准**:');
+        for (const ac of item.acceptance_criteria) {
+          lines.push(`- [ ] ${ac}`);
+        }
+        lines.push('');
+      }
+
+      if (item.dependencies.length > 0) {
+        lines.push(`**依赖**: ${item.dependencies.join(', ')}`);
+        lines.push('');
+      }
+
+      lines.push(`**验证方式**: ${item.verification}`);
+      lines.push('');
+      lines.push('---');
+      lines.push('');
+    }
+
+    return lines.join('\n');
   }
 
   private formatInstruction(): string {

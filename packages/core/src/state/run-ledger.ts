@@ -216,4 +216,42 @@ export class RunLedger {
     const line = JSON.stringify(entry) + '\n';
     await fs.appendFile(this.getLedgerPath(), line, 'utf8');
   }
+
+  /**
+   * V20 Task 9: 返回最近的成功状态（用于压缩后恢复）
+   */
+  getRecoveryPoint(): RunLedgerEntry | null {
+    const successEntries = this.entries.filter(e => e.success);
+    return successEntries.length > 0 ? successEntries[successEntries.length - 1] ?? null : null;
+  }
+
+  /**
+   * V20 Task 9: 压缩后生成摘要：从指定 iteration 到现在的精简描述
+   */
+  summarizeSince(iteration: number): string {
+    const since = this.entries.filter(e => (e.iteration ?? 0) >= iteration);
+    if (since.length === 0) return '(no activity since recovery point)';
+    const tools = new Map<string, number>();
+    let fails = 0;
+    for (const e of since) {
+      tools.set(e.tool, (tools.get(e.tool) ?? 0) + 1);
+      if (!e.success) fails++;
+    }
+    const toolSummary = [...tools.entries()].map(([t, c]) => `${t}×${c}`).join(', ');
+    return `Since iter ${iteration}: ${since.length} calls (${toolSummary}), ${fails} failed`;
+  }
+
+  /**
+   * V20 Task 9: Token 用量统计
+   */
+  getTokenUsage(): { total: number; perTool: Record<string, number> } {
+    const perTool: Record<string, number> = {};
+    let total = 0;
+    for (const e of this.entries) {
+      const t = e.tokens ?? 0;
+      total += t;
+      perTool[e.tool] = (perTool[e.tool] ?? 0) + t;
+    }
+    return { total, perTool };
+  }
 }

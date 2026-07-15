@@ -148,8 +148,22 @@ export class ContextOrchestrator {
   ): Promise<string> {
     await fs.mkdir(this.contextDir, { recursive: true });
     const entries = this.buildEntriesForStage(stage, story);
+    // V20 Task 8: 指针化注入 — 大体积条目改为路径+摘要
+    const pointerizedEntries = entries.map(entry => {
+      if (entry.tokenEstimate > 2000 && entry.metadata?.filePath) {
+        const summary = entry.content.length > 120
+          ? entry.content.slice(0, 120) + '…'
+          : entry.content;
+        return {
+          ...entry,
+          content: `[file: ${entry.metadata.filePath}] ${summary}`,
+          tokenEstimate: Math.min(entry.tokenEstimate, 50),
+        };
+      }
+      return entry;
+    });
     const filePath = this.getContextPath(stage);
-    const lines = entries.map(e => JSON.stringify(e));
+    const lines = pointerizedEntries.map(e => JSON.stringify(e));
     await fs.writeFile(filePath, lines.join('\n') + '\n', 'utf8');
     return filePath;
   }
@@ -326,7 +340,23 @@ export class ContextOrchestrator {
       }
       if (action === 'compress') {
         // Drop ALL entries with priority < 0.5 outright.
-        const kept = context.entries.filter(e => e.priority >= 0.5);
+        let kept = context.entries.filter(e => e.priority >= 0.5);
+
+        // V20 Task 8: 指针化大体积条目
+        kept = kept.map(entry => {
+          if (entry.tokenEstimate > 1000 && entry.metadata?.filePath) {
+            const summary = entry.content.length > 120
+              ? entry.content.slice(0, 120) + '…'
+              : entry.content;
+            return {
+              ...entry,
+              content: `[file: ${entry.metadata.filePath}] ${summary}`,
+              tokenEstimate: Math.min(entry.tokenEstimate, 50),
+            };
+          }
+          return entry;
+        });
+
         workingContext = {
           stage: context.stage,
           storyId: context.storyId,

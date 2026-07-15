@@ -24,6 +24,13 @@ export interface RedFlag {
   requiresPriorCall: string[];
   /** Severity: block = hard rejection, warn = soft hint. */
   severity: 'block' | 'warn';
+  /**
+   * V20 Task 7: How this rule behaves under AZA_AUTO_APPROVE_PRD=true.
+   * - 'block' (default): still hard-blocks the tool call in auto mode.
+   * - 'log': only console.warn the violation, does not block (used for
+   *   soft form-check / warn-severity rules so the auto loop can advance).
+   */
+  autoMode?: 'block' | 'log';
   /** Human-readable remediation hint returned to the agent. */
   remediation: string;
 }
@@ -39,6 +46,7 @@ export const RED_FLAGS: RedFlag[] = [
     tool: 'aza_task_implement',
     requiresPriorCall: ['aza_prd_approve'],
     severity: 'block',
+    autoMode: 'block',
     remediation: 'Cannot implement before PRD is approved. Call aza_prd_review → aza_prd_approve first.',
   },
   {
@@ -46,6 +54,7 @@ export const RED_FLAGS: RedFlag[] = [
     tool: 'aza_task_design',
     requiresPriorCall: ['aza_prd_approve'],
     severity: 'block',
+    autoMode: 'block',
     remediation: 'Cannot design tasks before PRD is approved. Call aza_prd_review → aza_prd_approve first.',
   },
   {
@@ -53,6 +62,7 @@ export const RED_FLAGS: RedFlag[] = [
     tool: 'aza_loop_complete',
     requiresPriorCall: ['aza_quality_check'],
     severity: 'block',
+    autoMode: 'block',
     remediation: 'Cannot complete a stage before quality check passes. Call aza_quality_check first.',
   },
   {
@@ -60,6 +70,7 @@ export const RED_FLAGS: RedFlag[] = [
     tool: 'aza_doc_generate',
     requiresPriorCall: ['aza_quality_check'],
     severity: 'block',
+    autoMode: 'block',
     remediation: 'Cannot generate final docs before quality check passes. Call aza_quality_check first.',
   },
   // ── RF-3: skipping exploration before design ──
@@ -68,6 +79,7 @@ export const RED_FLAGS: RedFlag[] = [
     tool: 'aza_dag',
     requiresPriorCall: ['aza_explore', 'aza_prd_approve'],
     severity: 'warn',
+    autoMode: 'log',
     remediation: 'Consider running aza_explore before aza_dag to surface hidden constraints.',
   },
   // ── RF-4: code change without security scan in build ──
@@ -76,6 +88,7 @@ export const RED_FLAGS: RedFlag[] = [
     tool: 'aza_task_implement',
     requiresPriorCall: ['aza_security_scan'],
     severity: 'warn',
+    autoMode: 'log',
     remediation: 'Build usually requires aza_security_scan before commit. Skipping it is allowed but flagged.',
   },
   // ── RF-5: archive without audit ──
@@ -84,6 +97,7 @@ export const RED_FLAGS: RedFlag[] = [
     tool: 'aza_doc_generate',
     requiresPriorCall: ['aza_audit'],
     severity: 'warn',
+    autoMode: 'log',
     remediation: 'Run aza_audit before aza_doc_generate to record loop-audit signals in RESUME.',
   },
   // ── RF-6: recursion into the same tool (Trellis pattern, sibling of Recursion Guard) ──
@@ -92,6 +106,7 @@ export const RED_FLAGS: RedFlag[] = [
     tool: 'aza_task_implement',
     requiresPriorCall: ['NOT_RECURSION'],
     severity: 'block',
+    autoMode: 'block',
     remediation: 'Recursion Guard: aza_task_implement cannot dispatch itself. Stop re-dispatching.',
   },
   // ── RF-7: contract drift before implementation ──
@@ -100,6 +115,7 @@ export const RED_FLAGS: RedFlag[] = [
     tool: 'aza_task_implement',
     requiresPriorCall: ['aza_contract_ack'],
     severity: 'warn',
+    autoMode: 'log',
     remediation: 'Acknowledge the execution contract (.aza/contract.md) before implementing.',
   },
   // ── RF-8: stage advance without gate check ──
@@ -108,6 +124,7 @@ export const RED_FLAGS: RedFlag[] = [
     tool: 'aza_loop',
     requiresPriorCall: ['aza_quality_check'],
     severity: 'block',
+    autoMode: 'block',
     remediation: 'Cannot advance past verify/archive without aza_quality_check passing.',
   },
   // ── RF-9: cross-stage tool call (caught by StageToolGuard, surfaced here for unified reporting) ──
@@ -116,6 +133,7 @@ export const RED_FLAGS: RedFlag[] = [
     tool: '*',
     requiresPriorCall: [],
     severity: 'block',
+    autoMode: 'block',
     remediation: 'Stage mismatch: the requested tool does not belong to the current pipeline stage.',
   },
 ];
@@ -146,13 +164,26 @@ function isPrereqSatisfied(prereq: string, callHistory: readonly string[]): bool
 /**
  * Check whether the given tool call would raise a Red Flag, given the
  * session's call history. Returns the first matching flag (or null).
+ *
+ * V20 Task 7: When AZA_AUTO_APPROVE_PRD=true, rules with `autoMode: 'log'`
+ * (warn-severity form-check rules) only emit console.warn and do NOT block,
+ * so the auto loop can advance. Rules with `autoMode: 'block'` (default)
+ * still hard-block regardless of mode.
  */
 export function checkRedFlags(toolName: string, callHistory: readonly string[]): RedFlag | null {
+  const autoMode = process.env.AZA_AUTO_APPROVE_PRD === 'true';
   const flags = RED_FLAGS_BY_TOOL[toolName] ?? [];
   for (const flag of flags) {
     if (flag.requiresPriorCall.length === 0) continue; // pure-marker flags
     const allSatisfied = flag.requiresPriorCall.every(p => isPrereqSatisfied(p, callHistory));
-    if (!allSatisfied) return flag;
+    if (!allSatisfied) {
+      if (autoMode && flag.autoMode === 'log') {
+        // eslint-disable-next-line no-console
+        console.warn(`[red-flags:auto-log] ${flag.id}: ${flag.remediation}`);
+        continue;
+      }
+      return flag;
+    }
   }
   return null;
 }

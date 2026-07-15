@@ -9,6 +9,7 @@ import { loopCommand } from './commands/loop';
 import { budgetCommand } from './commands/budget';
 import { auditCommand } from './commands/audit';
 import { packCommand } from './commands/pack';
+import { registerDaemonCommand } from './commands/daemon';
 
 const program = new Command();
 
@@ -140,5 +141,8 @@ program
   .action(async (options) => {
     await auditCommand(normalizeCliPath(options.dir));
   });
+
+// V20 Task 3: 12h unattended auto-loop daemon
+registerDaemonCommand(program);
 
 program.parse(process.argv);

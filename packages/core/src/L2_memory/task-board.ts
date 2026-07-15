@@ -160,3 +160,27 @@ export function readTaskBoardSummary(azaDir: string): TaskBoardSummary {
     paths,
   };
 }
+
+/**
+ * V20 增强：把 resume-generator 的最新 RESUME.md 同步到
+ * `<azaDir>/task-board.json`，作为结构化快照，便于跨会话查询。
+ *
+ * 该函数是 best-effort：RESUME.md 缺失、JSON 损坏或写入失败时静默吞掉，
+ * 不会影响主流程。
+ */
+export async function syncTaskBoardFromResume(azaDir: string, resumePath: string): Promise<void> {
+  try {
+    const resumeContent = await fs.promises.readFile(resumePath, 'utf8');
+    const resume = JSON.parse(resumeContent);
+    const boardPath = path.join(azaDir, 'task-board.json');
+    const board = {
+      last_synced_at: new Date().toISOString(),
+      resume_last_milestone: resume.last_milestone || null,
+      resume_iteration: resume.iteration || 0,
+      tasks: resume.tasks || [],
+    };
+    await fs.promises.writeFile(boardPath, JSON.stringify(board, null, 2), 'utf8');
+  } catch {
+    /* best-effort */
+  }
+}

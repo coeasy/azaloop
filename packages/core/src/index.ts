@@ -62,6 +62,10 @@ export type {
 export { runMultiRolePrdReview } from './L1_spec/prd-multi-role-review';
 export type { ReviewRole, RoleFinding, MultiRoleReviewResult } from './L1_spec/prd-multi-role-review';
 
+// L1 - Spec / PRD TodoList Generator
+export { PrdTodolistGenerator, generatePrdTodolist } from './L1_spec/prd-todolist-generator';
+export type { TodoItem, TodoList } from './L1_spec/prd-todolist-generator';
+
 export {
   ensureConstitution,
   readConstitution,
@@ -388,12 +392,15 @@ export { AutoLoopDriver } from './L7_loop/auto-loop-driver';
 export type { AutoLoopDriverOptions, PrdReviewResult, StepInfo, StepResult, LoopCompleteResult, LoopDriverStatus } from './L7_loop/auto-loop-driver';
 export { AutoLoopScheduler } from './L7_loop/auto-loop-scheduler';
 export type { SchedulerStatus, SchedulerCallbacks, SchedulerState } from './L7_loop/auto-loop-scheduler';
+// V20 Task 3: CLI daemon persistent state
+export { loadDaemonState, saveDaemonState, createInitialDaemonState } from './L7_loop/daemon-state';
+export type { DaemonState } from './L7_loop/daemon-state';
 export { InnerStageResult } from './L7_loop/inner-loop';
 export { PhaseOneResult, MakerResult } from './L7_loop/phase-loop';
 export { StageGuards, createDefaultGuards, createPhaseGateAdapter } from './L7_loop/guards';
 export type { GuardResult, GuardCheck } from './L7_loop/guards';
 export { DeadlockDetector } from './L7_loop/deadlock-detector';
-export type { ActionRecord } from './L7_loop/deadlock-detector';
+export type { ActionRecord, DeadlockDetectorConfig } from './L7_loop/deadlock-detector';
 export { HardStopManager } from './L7_loop/hard-stop';
 export type { StopReason, HardStopRecord } from './L7_loop/hard-stop';
 export {

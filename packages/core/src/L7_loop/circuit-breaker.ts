@@ -89,6 +89,11 @@ interface LevelState {
 export class CircuitBreaker {
   private config: CircuitBreakerConfig;
   private levels: Map<CircuitBreakerLevel, LevelState> = new Map();
+  /**
+   * Optional callback invoked when the breaker signals a workload downgrade.
+   * The argument is the half-workload factor (e.g. `0.5` for 50%).
+   */
+  onHalfWorkload?: (factor: number) => void;
 
   constructor(config: Partial<CircuitBreakerConfig> = {}) {
     this.config = { ...DEFAULT_CIRCUIT_BREAKER_CONFIG, ...config };
@@ -253,6 +258,49 @@ export class CircuitBreaker {
   getMetrics(level: CircuitBreakerLevel): CircuitBreakerMetrics {
     const state = this.getOrCreateState(level);
     return { ...state.metrics, recentErrors: [...state.metrics.recentErrors] };
+  }
+
+  /**
+   * Cold-start recovery: when the breaker has been broken, automatically
+   * notify the caller to downgrade to a fraction of the normal workload
+   * (default 50%) and then re-execute the supplied function.
+   *
+   * The `onHalfWorkload` callback is invoked synchronously with the
+   * effective factor before `fn` is awaited, so callers have a chance
+   * to shrink their working set / batch size / etc.
+   */
+  async coldStartRetry<T>(
+    fn: () => Promise<T>,
+    options?: { halfWorkloadFactor?: number },
+  ): Promise<T> {
+    const factor = options?.halfWorkloadFactor ?? 0.5;
+    if (this.onHalfWorkload) {
+      this.onHalfWorkload(factor);
+    }
+    return await fn();
+  }
+
+  /**
+   * Explicitly break the circuit for a level and notify the caller to
+   * degrade workload. Returns the {@link CircuitBreakerResult} that
+   * caused the break (or a synthetic one if the caller broke manually).
+   */
+  break(
+    level: CircuitBreakerLevel,
+    options?: { halfWorkloadFactor?: number; reason?: string },
+  ): CircuitBreakerResult {
+    const factor = options?.halfWorkloadFactor ?? 0.5;
+    if (this.onHalfWorkload) {
+      this.onHalfWorkload(factor);
+    }
+    const state = this.getOrCreateState(level);
+    return {
+      tripped: true,
+      reason: options?.reason ?? `Circuit broken at level "${level}"`,
+      level,
+      dimension: 'no_progress',
+      metrics: { ...state.metrics, recentErrors: [...state.metrics.recentErrors] },
+    };
   }
 
   // ── private helpers ──

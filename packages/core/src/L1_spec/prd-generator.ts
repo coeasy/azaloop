@@ -5,6 +5,8 @@ import {
   PRD_DRAFT_PROMPT,
   type CompetitiveContext,
 } from './prd-llm-prompts';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * PRD complexity levels matching the complexity matrix.
@@ -49,6 +51,7 @@ export interface PRDGenerationInput {
   constraints?: string[];
   complexity?: Complexity;
   productType?: ProductType;
+  force_14chapters?: boolean;  // 覆盖自动判断
 }
 
 /**
@@ -124,7 +127,7 @@ export class PRDGenerator {
     const complexity = options.complexity || input.complexity || this.inferComplexity(description);
     const productType = options.productType || input.productType || this.detectProductType(input.title, description);
 
-    const use14Chapters = options.enable_14chapters ?? (complexity === 'L4');
+    const use14Chapters = (complexity === 'L3' || complexity === 'L4') || (options.enable_14chapters ?? false);
 
     // P1-2: always inject competitive landscape (sync curated; live search via generateAsync)
     const competitive = buildCompetitiveAppendixSync(`${input.title} ${description}`);
@@ -166,6 +169,13 @@ export class PRDGenerator {
       acceptance_criteria: flatAcs,
       risks,
     };
+
+    // 14 章节模板启用时，在 overview 前缀注入标记 + 在末尾追加 H2 骨架
+    if (use14Chapters) {
+      this.getDraftPromptWith14Chapters(input);
+      const chapters = this.get14ChaptersOutline();
+      prd.overview = `[14章节模板已启用]\n\n${prd.overview}\n\n${chapters.join('\n')}`;
+    }
 
     const parsed = PRDSchema.parse(prd);
 
@@ -547,25 +557,84 @@ export class PRDGenerator {
   detectProductType(title: string, description: string): ProductType {
     const text = `${title} ${description}`.toLowerCase();
 
-    // Detect commercialization
-    const commercialKeywords = ['商业化', '付费', '订阅', 'pricing', 'subscription', 'revenue', 'saas', 'b2b', 'b2c', 'monetize', '盈利', '客户', 'customer'];
-    const internalKeywords = ['内部', '自研', '工具', '效率', 'internal', 'tooling', 'infra', '运维', 'devops', 'automation'];
-    const isCommercial = commercialKeywords.some(kw => text.includes(kw));
-    const isInternal = internalKeywords.some(kw => text.includes(kw));
-    const commercialization: CommercializationType = isCommercial && !isInternal ? 'commercial' : 'internal';
+    // Detect commercialization with weighted scoring
+    const commercialKeywords = [
+      { kw: '商业化', weight: 3 }, { kw: '付费', weight: 3 }, { kw: '订阅', weight: 3 },
+      { kw: 'pricing', weight: 3 }, { kw: 'subscription', weight: 3 }, { kw: 'revenue', weight: 3 },
+      { kw: 'saas', weight: 3 }, { kw: 'b2b', weight: 3 }, { kw: 'b2c', weight: 3 },
+      { kw: 'monetize', weight: 3 }, { kw: '盈利', weight: 3 }, { kw: '客户', weight: 2 },
+      { kw: 'customer', weight: 2 }, { kw: '销售', weight: 3 }, { kw: 'license', weight: 3 },
+    ];
+    const internalKeywords = [
+      { kw: '内部', weight: 3 }, { kw: '自研', weight: 3 }, { kw: '工具', weight: 2 },
+      { kw: '效率', weight: 2 }, { kw: 'internal', weight: 3 }, { kw: 'tooling', weight: 2 },
+      { kw: 'infra', weight: 2 }, { kw: '运维', weight: 3 }, { kw: 'devops', weight: 3 },
+      { kw: 'automation', weight: 2 }, { kw: '员工', weight: 2 }, { kw: 'employee', weight: 2 },
+    ];
 
-    // Detect category
-    const businessKeywords = ['业务', '流程', 'workflow', 'crm', 'erp', 'oa', '审批', '工单'];
-    const toolKeywords = ['工具', '效率', '编辑器', 'tool', 'editor', 'converter', '生成器', 'utility'];
-    const transactionKeywords = ['交易', '支付', '订单', '电商', 'payment', 'order', 'commerce', '交易', '结算', '支付', 'wallet'];
-    const infraKeywords = ['基础', '平台', '服务', '中间件', 'infra', 'platform', 'middleware', 'api', '网关', 'gateway', '微服务'];
+    let commercialScore = 0;
+    let internalScore = 0;
+    for (const { kw, weight } of commercialKeywords) {
+      if (text.includes(kw)) commercialScore += weight;
+    }
+    for (const { kw, weight } of internalKeywords) {
+      if (text.includes(kw)) internalScore += weight;
+    }
+    const commercialization: CommercializationType = commercialScore > internalScore ? 'commercial' : 'internal';
 
+    // Detect category with weighted scoring
+    const businessKeywords = [
+      { kw: '业务', weight: 3 }, { kw: '流程', weight: 3 }, { kw: 'workflow', weight: 3 },
+      { kw: 'crm', weight: 3 }, { kw: 'erp', weight: 3 }, { kw: 'oa', weight: 3 },
+      { kw: '审批', weight: 3 }, { kw: '工单', weight: 3 }, { kw: '多角色', weight: 2 },
+      { kw: '协同', weight: 2 },
+    ];
+    const toolKeywords = [
+      { kw: '工具', weight: 3 }, { kw: '效率', weight: 2 }, { kw: '编辑器', weight: 3 },
+      { kw: 'tool', weight: 3 }, { kw: 'editor', weight: 3 }, { kw: 'converter', weight: 3 },
+      { kw: '生成器', weight: 3 }, { kw: 'utility', weight: 3 }, { kw: '单一功能', weight: 2 },
+    ];
+    const transactionKeywords = [
+      { kw: '交易', weight: 3 }, { kw: '支付', weight: 3 }, { kw: '订单', weight: 3 },
+      { kw: '电商', weight: 3 }, { kw: 'payment', weight: 3 }, { kw: 'order', weight: 3 },
+      { kw: 'commerce', weight: 3 }, { kw: '结算', weight: 3 }, { kw: 'wallet', weight: 3 },
+      { kw: '购物车', weight: 3 },
+    ];
+    const infraKeywords = [
+      { kw: '基础', weight: 3 }, { kw: '平台', weight: 3 }, { kw: '服务', weight: 2 },
+      { kw: '中间件', weight: 3 }, { kw: 'infra', weight: 3 }, { kw: 'platform', weight: 3 },
+      { kw: 'middleware', weight: 3 }, { kw: 'api', weight: 2 }, { kw: '网关', weight: 3 },
+      { kw: 'gateway', weight: 3 }, { kw: '微服务', weight: 3 },
+    ];
+
+    let businessScore = 0;
+    let toolScore = 0;
+    let transactionScore = 0;
+    let infraScore = 0;
+
+    for (const { kw, weight } of businessKeywords) {
+      if (text.includes(kw)) businessScore += weight;
+    }
+    for (const { kw, weight } of toolKeywords) {
+      if (text.includes(kw)) toolScore += weight;
+    }
+    for (const { kw, weight } of transactionKeywords) {
+      if (text.includes(kw)) transactionScore += weight;
+    }
+    for (const { kw, weight } of infraKeywords) {
+      if (text.includes(kw)) infraScore += weight;
+    }
+
+    // Pick category with highest score; default to tool
     let category: ProductCategory = 'tool';
-    if (transactionKeywords.some(kw => text.includes(kw))) {
+    const maxScore = Math.max(businessScore, toolScore, transactionScore, infraScore);
+    if (maxScore === 0) {
+      category = 'tool'; // default
+    } else if (transactionScore === maxScore) {
       category = 'transaction';
-    } else if (businessKeywords.some(kw => text.includes(kw))) {
+    } else if (businessScore === maxScore) {
       category = 'business';
-    } else if (infraKeywords.some(kw => text.includes(kw))) {
+    } else if (infraScore === maxScore) {
       category = 'infrastructure';
     } else {
       category = 'tool';
@@ -595,13 +664,36 @@ export class PRDGenerator {
    * provide only a title + structured fields (the HARD-GATE minimal input
    * pattern from T25, for example).
    */
-  private inferComplexity(description: string | undefined | null): Complexity {
+  inferComplexity(description: string | undefined | null): Complexity {
     const text = description ?? '';
     const length = text.length;
     if (length < 100) return 'L1';
     if (length < 500) return 'L2';
     if (length < 2000) return 'L3';
     return 'L4';
+  }
+
+  /**
+   * V21: 返回 14 章节 H2 标题列表。
+   * 用于在 L3/L4 复杂度下将 14 章节骨架附加到 PRD overview 末尾。
+   */
+  get14ChaptersOutline(): string[] {
+    return [
+      '## 1. 项目背景',
+      '## 2. 需求基本情况',
+      '## 3. 商业分析',
+      '## 4. 项目收益目标',
+      '## 5. 项目方案概述',
+      '## 6. 项目范围',
+      '## 7. 项目风险',
+      '## 8. 术语表',
+      '## 9. 参考文献',
+      '## 10. 功能需求',
+      '## 11. 数据埋点',
+      '## 12. 角色和权限',
+      '## 13. 运营计划',
+      '## 14. 待决事项',
+    ];
   }
 
   /**
@@ -948,11 +1040,35 @@ export class PRDGenerator {
   }
 
   /**
+   * Load the 14-chapter detailed guide from the templates directory.
+   * Tries multiple candidate locations to support both src/ and dist/ layouts.
+   *
+   * @returns Guide markdown content, or empty string if the file is missing/unreadable.
+   */
+  private get14ChapterGuide(): string {
+    const candidates = [
+      // src layout: packages/core/src/L1_spec/templates/...
+      path.join(__dirname, 'templates', '14-chapter-detailed-guide.md'),
+      // dist layout: packages/core/dist/L1_spec/templates/...
+      path.join(__dirname, '..', 'src', 'L1_spec', 'templates', '14-chapter-detailed-guide.md'),
+      // repo root resolution (when running from compiled dist with package root)
+      path.resolve(__dirname, '..', '..', '..', 'src', 'L1_spec', 'templates', '14-chapter-detailed-guide.md'),
+      path.resolve(__dirname, '..', '..', '..', 'dist', 'L1_spec', 'templates', '14-chapter-detailed-guide.md'),
+    ];
+    for (const p of candidates) {
+      try {
+        if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8');
+      } catch { /* try next */ }
+    }
+    return '';
+  }
+
+  /**
    * V20: Get the draft prompt with 14-chapter template (for L3/L4 complexity).
    */
   getDraftPromptWith14Chapters(
     input: PRDGenerationInput,
-    competitive: CompetitiveContext | null,
+    competitive: CompetitiveContext | null = null,
   ): string {
     return this.generateDraftPrompt(input, competitive, {
       enable_14chapters: true,
@@ -993,7 +1109,7 @@ export class PRDGenerator {
     const description = input.description ?? input.title ?? '';
     const complexity = options.complexity || input.complexity || this.inferComplexity(description);
     const productType = options.productType || input.productType || this.detectProductType(input.title, description);
-    const use14Chapters = options.enable_14chapters ?? (complexity === 'L4' || complexity === 'L3');
+    const use14Chapters = (complexity === 'L4' || complexity === 'L3') || (options.enable_14chapters ?? false);
 
     return this.attachMetadata(optimized.prd, complexity, productType, use14Chapters);
   }

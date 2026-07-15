@@ -17,6 +17,28 @@
 
 ## 1. 一行命令初始化（推荐）
 
+### 方式 A：从源码一键构建并本地安装（portable）
+
+在 AzaLoop monorepo 根目录：
+
+```bash
+# 构建 dist/portable（CLI + MCP）并执行本机安装脚本
+pnpm exec aza pack --install
+# 或
+pnpm build:portable
+# Windows:  cd dist\portable && .\install.ps1
+# macOS/Linux: cd dist/portable && bash install.sh
+```
+
+安装目标：`%USERPROFILE%\.azaloop`（Windows）或 `~/.azaloop`（Unix）。安装后可用 `aza --version`，再在业务项目中：
+
+```bash
+cd your-project
+aza init --client cursor
+```
+
+### 方式 B：npx / 包管理器初始化
+
 无需手动配置！只需一条命令即可完成所有客户端配置：
 
 ```bash
@@ -138,13 +160,15 @@ pnpm build
 
 **自动续跑**：`templates/clients/opencode/continue.md` 定义了会话启动流程：
 1. `aza_session_start` — 初始化系统
-2. `aza_context calibrate` — 获取上下文
+2. `aza_session(action=calibrate)` — 获取上下文
 3. `aza_conventions list` — 加载已学约定
 4. `aza_loop next` — 续跑循环
 
 ---
 
 ### 2.2 Cursor
+
+**推荐**：见 [CURSOR-THIRD-PARTY.md](./CURSOR-THIRD-PARTY.md)（第三方 PC + 本机一键配置）。
 
 **配置文件位置**：项目根 `.cursor/mcp.json`
 
@@ -153,16 +177,26 @@ pnpm build
   "mcpServers": {
     "azaloop": {
       "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
+      "args": ["-y", "@azaloop/mcp-server"],
+      "env": {
+        "AZA_AUTO_APPROVE_PRD": "true"
+      }
     }
   }
 }
 ```
 
-**规则文件**：复制 `templates/clients/cursor/rules/azaloop.mdc` 到 `.cursor/rules/`
+本地 monorepo（未发布）可用：
+
+```powershell
+node scripts/setup-cursor.mjs --target D:\path\to\your-app --mode local --fresh
+```
+
+**规则文件**：`.cursor/rules/azaloop.mdc`（来自 `templates/clients/cursor/rules/`）
 
 **Hooks**（可选）：复制 `templates/clients/cursor/hooks/` 到 `.cursor/hooks/`
+
+**Commands**：复制 `templates/clients/cursor/commands/` 到 `.cursor/commands/`
 
 ---
 
@@ -473,7 +507,7 @@ User: "请帮我开发一个 React 待办事项应用"
 → LLM 调用 aza_prd_generate            # 生成 PRD
 → LLM 调用 aza_prd_validate            # 校验 PRD
 → LLM 调用 aza_loop_next               # 进入设计阶段
-→ LLM 调用 aza_task_design             # 拆解 Story
+→ LLM 调用 aza_spec(design)            # 拆解 Story
 → LLM 调用 aza_loop_next               # 进入编码阶段
 → LLM 根据 TDD 铁律编码                 # 先写测试再实现
 → LLM 调用 aza_quality_check           # 五级门禁
@@ -489,7 +523,7 @@ User: "请帮我开发一个 React 待办事项应用"
 
 ```
 → LLM 调用 aza_session_start           # 初始化
-→ LLM 调用 aza_context calibrate       # 加载状态
+→ LLM 调用 aza_session(calibrate)      # 加载状态
 → LLM 调用 aza_conventions list        # 加载约定
 → LLM 调用 aza_loop next               # 从断点继续
 ```

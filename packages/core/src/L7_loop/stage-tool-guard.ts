@@ -22,6 +22,21 @@ export const WRITE_TOOLS = new Set<string>([
   'aza_memory',
 ]);
 
+/**
+ * V20 Task 7: Tools allowed in ANY stage when AZA_AUTO_APPROVE_PRD=true.
+ * Lets the auto loop dispatch PRD/spec/finish/loop/quality/auto freely;
+ * aza_session / aza_memory / aza_meta still go through the normal matrix
+ * (they are already in ALWAYS so they pass regardless).
+ */
+const AUTO_ALLOWED_TOOLS = new Set<string>([
+  'aza_prd',
+  'aza_spec',
+  'aza_finish',
+  'aza_auto',
+  'aza_loop',
+  'aza_quality',
+]);
+
 export interface StageToolGuardResult {
   allowed: boolean;
   reason?: string;
@@ -41,6 +56,11 @@ export function checkStageTool(
   stage: Stage,
   _callHistory: string[] = [],
 ): StageToolGuardResult {
+  // V20 Task 7: auto-mode bypass — let core loop tools run in any stage.
+  const autoMode = process.env.AZA_AUTO_APPROVE_PRD === 'true';
+  if (autoMode && AUTO_ALLOWED_TOOLS.has(toolName)) {
+    return { allowed: true };
+  }
   const patterns = STAGE_TOOL_MATRIX[stage] ?? [];
   const allowed = patterns.some((p) => matchesPattern(toolName, p));
 

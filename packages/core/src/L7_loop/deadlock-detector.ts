@@ -5,12 +5,49 @@ export interface ActionRecord {
   iteration: number;
 }
 
+/**
+ * Configuration options for {@link DeadlockDetector}.
+ *
+ * The legacy `threshold` field (a plain number) is still accepted by the
+ * constructor and is mapped onto `stagnationThreshold` for backward
+ * compatibility with existing call sites.
+ */
+export interface DeadlockDetectorConfig {
+  /** Number of consecutive identical tool:action records before a deadlock is reported. */
+  threshold?: number;
+  /** Maximum time (ms) without any progress before a no-progress deadlock is reported. */
+  noProgressTimeoutMs?: number;
+  /** Number of times the same decision point may repeat within the recent window before a deadlock is reported. */
+  repeatedDecisionThreshold?: number;
+}
+
+const DEFAULT_NO_PROGRESS_TIMEOUT_MS: number = 30 * 60 * 1000; // 30 minutes
+const DEFAULT_REPEATED_DECISION_THRESHOLD: number = 3;
+
 export class DeadlockDetector {
   private actions: ActionRecord[] = [];
   private threshold: number;
+  private noProgressTimeoutMs: number;
+  private repeatedDecisionThreshold: number;
 
-  constructor(threshold: number = 3) {
-    this.threshold = threshold;
+  /**
+   * Backwards-compatible constructor.
+   *
+   * Accepts either a number (legacy `threshold`) or a {@link DeadlockDetectorConfig}
+   * object. The new fields have sensible defaults so existing call sites that pass
+   * a plain number continue to work unchanged.
+   */
+  constructor(config: number | DeadlockDetectorConfig = {}) {
+    if (typeof config === 'number') {
+      this.threshold = config;
+      this.noProgressTimeoutMs = DEFAULT_NO_PROGRESS_TIMEOUT_MS;
+      this.repeatedDecisionThreshold = DEFAULT_REPEATED_DECISION_THRESHOLD;
+    } else {
+      this.threshold = config.threshold ?? 3;
+      this.noProgressTimeoutMs = config.noProgressTimeoutMs ?? DEFAULT_NO_PROGRESS_TIMEOUT_MS;
+      this.repeatedDecisionThreshold =
+        config.repeatedDecisionThreshold ?? DEFAULT_REPEATED_DECISION_THRESHOLD;
+    }
   }
 
   record(tool: string, action: string, iteration: number): void {
@@ -47,6 +84,47 @@ export class DeadlockDetector {
     const recent = this.actions.slice(-this.threshold);
     const first = recent[0];
     return first ? { tool: first.tool, action: first.action } : null;
+  }
+
+  /**
+   * Check whether the loop has been running without any observable progress for
+   * longer than `noProgressTimeoutMs` milliseconds.
+   *
+   * @param lastChangeAt  Timestamp (ms since epoch) of the last observed change
+   *                      in iteration state.
+   * @param now           Optional reference time for the check. Defaults to `Date.now()`.
+   */
+  checkNoProgress(
+    lastChangeAt: number,
+    now: number = Date.now(),
+  ): { deadlocked: boolean; reason?: string } {
+    const elapsed = now - lastChangeAt;
+    if (elapsed > this.noProgressTimeoutMs) {
+      return {
+        deadlocked: true,
+        reason: `no_progress_timeout (${elapsed}ms > ${this.noProgressTimeoutMs}ms)`,
+      };
+    }
+    return { deadlocked: false };
+  }
+
+  /**
+   * Check whether the same decision point has been re-entered at least
+   * `repeatedDecisionThreshold` times within the most recent decisions.
+   */
+  checkRepeatedDecision(
+    decisionPoint: string,
+    recentDecisions: string[],
+  ): { deadlocked: boolean; reason?: string } {
+    const window = recentDecisions.slice(-this.repeatedDecisionThreshold);
+    const count = window.filter(d => d === decisionPoint).length;
+    if (count >= this.repeatedDecisionThreshold) {
+      return {
+        deadlocked: true,
+        reason: `repeated_decision (${decisionPoint} appeared ${count} times)`,
+      };
+    }
+    return { deadlocked: false };
   }
 
   clear(): void {

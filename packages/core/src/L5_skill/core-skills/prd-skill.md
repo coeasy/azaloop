@@ -1,41 +1,160 @@
 ---
 name: prd
-version: 1.0
+version: 2.0
 type: document
 ---
 
-# PRD Generation Skill
+# PRD Generation Skill — 完整方法论
 
 ## Overview
-Generate structured PRD documents from natural language requirements, following the 14-chapter template with complexity-aware generation.
+基于《决胜B端》方法论和 14 章节模板，生成结构化、可落地的 PRD 文档。支持产品定型（商业化/自研 × 业务型/工具型/交易型/基础服务型），自动适配章节深度。
 
 ## When to Use
-- When user provides a high-level requirement ("make a todo app")
-- When starting a new project or feature
-- Before any design or implementation work
+- 用户提供高层需求（"做一个任务管理应用"）
+- 启动新项目或功能开发
+- 需要生成可交付的产品需求文档
+- 复杂度 L3/L4 必须使用 14 章节模板
+
+## 核心方法论
+
+### 产品定型（阶段 0）
+在生成 PRD 前，先判断产品类型：
+
+**商业属性（二选一）**：
+- 商业化产品：面向外部客户销售（SaaS、私有化部署）
+- 企业自研系统：内部使用，不对外销售
+
+**功能类型（四选一）**：
+- 业务型管理软件：多角色协同、长业务链（ERP、CRM、OA）
+- 工具型软件：单一问题域、短业务链（电子签章、视频会议）
+- 交易型平台：撮合交易、涉及支付结算（电商、OMS）
+- 基础服务型：抽象共享能力、供其他系统调用（权限中心、消息推送）
+
+### 14 章节生成指引（阶段 1-3）
+
+**前置章节（1-9章）**：
+1. **项目背景**：业务现状、面临问题、解决思路、决策依据
+   - 方法论：三层业务调研（战略层→战术层→执行层）
+   - 质量标准：有数据支撑、问题有优先级、解决思路与问题对应
+
+2. **需求基本情况**：需求提出人、使用人、受影响人、场景描述、频率、痛点、价值
+   - 方法论：十三要素五步法 + 场景六要素（人物、时间、地点、起因、经过、结果）
+   - 质量标准：三类角色已识别、至少 1 个核心场景完整描述
+
+3. **商业分析**（因产品类型差异最大）：
+   - 商业化产品：目标市场、市场规模（TAM/SAM/SOM）、客户画像、竞品分析、差异化定位
+   - 企业自研：同类系统调研、业务痛点优先级、投入产出评估
+   - SaaS 补充：CAC、LTV、MRR、Churn Rate（LTV/CAC > 3 为健康基线）
+
+4. **项目收益目标**：
+   - 商业化：营收目标、客户数、续费率、NPS
+   - 自研：ROI 分析、效率提升目标、采纳率目标
+
+5. **项目方案概述**：整体方案、技术选型、里程碑
+
+6. **项目范围**：功能边界、非功能需求、排除项
+
+7. **项目风险**：风险描述、概率、影响、应对策略
+   - 质量标准：每个风险都有概率和影响评估、高风险必须有应对策略
+
+8-9. **术语与参考文献**
+
+**核心章节（第 10 章）**：
+10. **功能需求**（最大、最核心）：
+    - 10.1 产品框架概述：
+      - 系统架构图（Mermaid graph TB + subgraph 分层）
+      - ER 数据模型（erDiagram，所有核心实体+关系+关键属性）
+      - 业务流程图（flowchart TD，主流程+关键分支+异常路径）
+      - 状态机图（stateDiagram-v2，正常+异常路径）
+      - 功能清单
+    - 10.2 产品需求详解：
+      - 逐模块：流程图 → 页面交互 → 业务规则
+      - 每个模块必须包含：功能描述、业务规则、页面交互、异常处理
+    - 10.3 异常情况处理方案：
+      - 异常场景、处理方式、用户提示
+
+**后置章节（11-14章）**：
+11. **数据埋点**：核心指标、埋点清单
+12. **角色和权限**：角色定义、权限矩阵（因功能类型差异）
+    - 业务型：完整 RBAC + 数据权限
+    - 工具型：简化角色（管理员/普通用户）
+    - 交易型：多边角色（买方/卖方/平台）
+    - 基础服务型：API 级别权限
+13. **运营计划**：
+    - 商业化：获客策略、客户成功、续费策略、种子客户计划
+    - 自研：内部推广、培训计划、试点部门、采纳率跟踪
+14. **待决事项**：所有 [TODO] 汇总、负责人、截止日期
+
+### 内容生成规则
+- **有信息则生成实质内容**：根据用户上下文生成具体、有实质的初稿
+- **信息不足则标注 [TODO]**：用 `[TODO: 具体需要补充什么]` 标注，不编造
+- **区分产品类型**：严格按产品定型结果调整章节深度
+- **理论框架外显**：用 `> 💡 方法论提示：` 说明使用的理论框架
+- **结构化优先**：表格、列表、Mermaid 图表优先于大段叙述
+- **图表使用 Mermaid**：架构图、流程图、状态机、ER 模型全部用 Mermaid
+
+### 产品类型差异化
+
+**商业化产品**：
+- 强化：市场分析、竞品定位、盈利模式、定价策略、MVP 验证、获客转化
+- 必查：SaaS 指标（CAC、LTV、MRR、Churn Rate）、多租户架构、配置化能力
+
+**企业自研系统**：
+- 强化：业务流程覆盖、组织架构适配、权限体系、数据集成、异常处理、内部推广
+- 必查：业务痛点优先级、ROI 分析、试点策略、采纳率跟踪
+
+**功能类型差异**：
+- 业务型：ER 数据模型必须完整、跨部门泳道流程图、状态机、角色权限矩阵
+- 工具型：核心使用流程极简、操作效率指标、快捷操作设计
+- 交易型：交易闭环（下单→支付→履约→结算→售后）、商品管理、营销能力
+- 基础服务型：API 接口设计、多租户隔离、性能指标、SDK/文档
 
 ## Process
-1. Parse user input for key requirements and constraints
-2. Generate PRD structure with goals, requirements, stories, and acceptance criteria
-3. Validate against constitutional rules
-4. Reflect and refine: check for gaps, inconsistencies, untestable criteria
-5. Output as JSON for programmatic use and Markdown for human reading
+1. **产品定型**：判断商业属性 + 功能类型，向用户确认
+2. **前置章节**：生成 1-9 章，每章立即输出
+3. **核心章节**：生成第 10 章（架构图 + ER 模型 + 流程图 + 状态机 + 逐模块需求）
+4. **后置章节**：生成 11-14 章
+5. **自检与缺口分析**：
+   - 检查每个章节是否完整
+   - 汇总所有 [TODO] 到第 14 章
+   - 输出待完善清单
 
 ## Examples
-Input: "Build a task management app"
-Output: PRD with 5 stories, 3 acceptance criteria each, 1 architecture diagram
+**输入**："做一个 CRM 系统"
+**产品定型**：商业化产品 × 业务型管理软件
+**输出**：
+- 14 章完整 PRD
+- 第 3 章：目标市场分析 + 竞品分析（Salesforce、HubSpot）+ 差异化定位
+- 第 10 章：系统架构图 + ER 模型（客户、商机、联系人、订单）+ 销售流程图 + 商机状态机
+- 第 12 章：完整 RBAC（销售、销售经理、管理员）+ 数据权限（部门隔离）
 
 ## Rationalizations
-- "I already know what to build" → Write it down. Specs prevent misalignment.
-- "The user said it simply" → Simple input doesn't mean simple output. Cover edge cases.
+- "用户没说清楚" → 应该用追问而非假设；列出明确假设并标注 [TODO]
+- "竞品都这么做" → 应差异化而非跟随；说明为何本方案更优
+- "后续迭代再补" → P0 缺陷必须当下修；P1 缺陷在当前 PRD 内闭环
+- "技术实现细节" → PRD 不写实现细节；聚焦「做什么」而非「怎么做」
+- "简单需求不需要详细 AC" → 每个故事至少 1 条可测量 AC；简单不等于模糊
+- "MVP 范围可以大一点" → MVP 聚焦 ≤3 个 P0 故事；多了就不是 MVP
+- "风险可以后续评估" → 高风险项必须有 mitigation；不评估=不负责
+- "架构图可以省略" → Eng 角色需要架构图；否则无法评估可行性
 
 ## Red Flags
-- No acceptance criteria defined
-- Stories not prioritized (P0/P1/P2/P3)
-- Architecture not documented
-- Risks not assessed
+- overview < 200 字或缺少痛点/竞品/差异化
+- goals < 2 个或不可测量（缺少指标或可观察结果）
+- functional_requirements < 2 个或描述空洞（"实现功能"类废话）
+- stories 数量不符合复杂度要求（L1=2, L2=3, L3=5, L4=6）
+- 每个 story 的 acceptance_criteria < 1 条或不可测试
+- architecture 缺少 mermaid 图
+- risks < 1 个或高风险无 mitigation
+- AC 使用模糊表述（"尽量"、"必要时"、"体验更好"）
+- AC 缺少异常场景处理
+- 14 章节模板启用但某些章节无实质内容
 
 ## Verification
-- PRD passes Zod schema validation
-- Each story has at least 1 testable acceptance criterion
-- Architecture includes at least one Mermaid diagram
+- PRD 通过 Zod schema 验证
+- 每个 story 至少有 1 条可测试的 AC（testable=true）
+- architecture 包含至少一个 Mermaid 图
+- 量化评分 ≥ 75 分（满分 100）
+- 质量门禁通过（P0 问题 = 0，P1 问题 ≤ 3）
+- 反模式检测通过（P0 反模式 = 0）
+- 4 角色审查通过（CEO/QA/Eng/Design 每个角色评分 ≥ 60%）

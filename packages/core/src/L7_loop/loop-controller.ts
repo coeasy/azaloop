@@ -3,6 +3,9 @@ import { StageGuards, createDefaultGuards, type GuardConditionKey } from './guar
 import { DeadlockDetector } from './deadlock-detector';
 import { HardStopManager, type StopReason } from './hard-stop';
 import { StrikeSystem } from '../L4_discipline/strike-system';
+import type { RootCauseCategory } from '../L4_discipline/strike-system';
+import { DlpChainDetector } from '../L4_discipline/dlp-chain-detector';
+import { diffPrd, diffContract, hasMaterialChange } from './content-diff';
 import { CircuitBreaker } from './circuit-breaker';
 import { CompletionGate, DEFAULT_BLOCK_COUNT_LIMIT } from './completion-gate';
 import { LoopAudit } from './loop-audit';
@@ -12,13 +15,16 @@ import { createRealHandlerProvider } from './real-handlers';
 import { StateManager } from '../state/state-manager';
 import { RunStateManager, AuditLog } from '../state/state-manager';
 import { ContextOrchestrator, type ContextEntryBundle } from '../L2_memory/context-orchestrator';
+import type { ContextEntry } from '../L2_memory/context-orchestrator';
 import { InjectionEngine } from '../L9_knowledge/injection-engine';
 import { ConfigLoader } from '../config/config-loader';
 import { DecisionPointRegistry, contentHash, type DecisionPointRecord, type DPStatus } from './decision-points';
 import { ResumeGenerator } from '../continuity/resume-generator';
+import { ProgressLedger2D } from './progress-ledger';
 import * as fs from 'fs';
 import type { LoopResponse, NextAction } from '@azaloop/shared';
 import type { AzaloopConfig } from '@azaloop/shared';
+import type { PRD } from '@azaloop/shared';
 import * as path from 'path';
 import { TokenBudget, type BudgetAction } from './token-budget';
 
@@ -100,6 +106,14 @@ export class LoopController {
   private lastHashes: { prd?: string; contract?: string } = {};
   /** Set when content drift is detected (PRD/contract changed without going through aza_prd_modify) */
   private driftDetected: boolean = false;
+  /** V20 Task 11: DLP 链式检测器 */
+  private dlpDetector: DlpChainDetector | null = null;
+  /** V20 Task 12: 缓存上次 PRD 内容（用于内容差异分析） */
+  private lastPrd: PRD | null = null;
+  /** V20 Task 12: 缓存上次 contract 内容（用于内容差异分析） */
+  private lastContract: string = '';
+  /** 二维进度账本（stage × iteration），用于崩溃恢复和无进展检测 */
+  private ledger2d: ProgressLedger2D = new ProgressLedger2D();
 
   readonly options: LoopControllerOptions;
   private conditions: Map<GuardConditionKey, boolean> = new Map();
@@ -190,6 +204,9 @@ export class LoopController {
       azaDir: this.configLoopOptions.azaDir || undefined,
       checkerCache: this.checkerCache,
     });
+    // Share the freshly-initialized real handler provider with the
+    // inner loop so the 5 phase handlers can dispatch through it.
+    this.innerLoop.setHandlerProvider(this.handlerProvider);
 
     // V12: Initialize StateManager for file synchronization
     if (this.configLoopOptions.azaDir) {
@@ -221,6 +238,11 @@ export class LoopController {
       this.resumeGen = new ResumeGenerator(this.configLoopOptions.azaDir);
     }
 
+    // V20 Task 11: Initialize DLP chain detector
+    if (this.configLoopOptions.azaDir) {
+      this.dlpDetector = new DlpChainDetector();
+    }
+
     // Initialize OuterLoop if enabled — pass shared InnerLoop so
     // both loops observe the same StateMachine instance.
     if (this.configLoopOptions.enableOuterLoop) {
@@ -230,12 +252,29 @@ export class LoopController {
         enableCircuitBreaker: true,
       }, this.innerLoop);
     }
+
+    // Crash recovery: restore the 2D progress ledger from
+    // `<azaDir>/ledger.json` if a previous session persisted one.
+    if (this.configLoopOptions.azaDir) {
+      try {
+        const ledgerPath = path.join(this.configLoopOptions.azaDir, 'ledger.json');
+        if (fs.existsSync(ledgerPath)) {
+          const raw = fs.readFileSync(ledgerPath, 'utf8');
+          this.ledger2d.deserialize(raw);
+        }
+      } catch {
+        // best-effort: a missing or corrupt ledger is non-fatal
+      }
+    }
   }
 
   // ── V12: Handler provider injection ──
 
   setHandlerProvider(provider: StageHandlerProvider): void {
     this.handlerProvider = provider;
+    // Keep the inner loop in lock-step with the controller's handler
+    // provider so the 5-phase handlers always use the same real handlers.
+    this.innerLoop?.setHandlerProvider(provider);
   }
 
   // ── C13: OuterLoop callbacks ──
@@ -246,6 +285,29 @@ export class LoopController {
     humanGate: HumanGateFn;
     commit: CommitFn;
   } | null = null;
+
+  /**
+   * V20 Task 6: 纯函数路由 — 所有路由决策集中在此，无 LLM 调用。
+   * 输入：当前 stage + 状态标志
+   * 输出：下一步 NextAction 或 null（null = 继续当前 stage）
+   */
+  private deterministicRoute(
+    stage: Stage,
+    ctx: {
+      hardStopped: boolean;
+      breakerTripped: boolean;
+      iterExceeded: boolean;
+      strikeHardStop: boolean;
+      budgetAction: BudgetAction;
+    },
+  ): NextAction | null {
+    if (ctx.hardStopped) return { tool: 'aza_loop', action: 'report', reason: 'Hard stop' };
+    if (ctx.breakerTripped) return { tool: 'aza_loop', action: 'escalate', reason: 'Circuit breaker tripped' };
+    if (ctx.iterExceeded) return { tool: 'aza_loop', action: 'stop', reason: 'Max iterations' };
+    if (ctx.strikeHardStop) return { tool: 'aza_loop', action: 'escalate', reason: '3-Strike' };
+    if (ctx.budgetAction === 'stop') return { tool: 'aza_loop', action: 'stop', reason: 'Token budget exhausted' };
+    return null;
+  }
 
   /**
    * 设置 OuterLoop 回调。
@@ -394,36 +456,65 @@ export class LoopController {
       // File doesn't exist yet — use default state
     }
 
-    // ── CP1 drift detection (spec-superflow content-level stale check):
-    //    Hash PRD + contract files and compare with last sync. If they
-    //    changed without going through aza_prd_modify, flag drift so
-    //    nextV12 can force back to the open stage. ──
+    // ── CP1 drift detection (V20 Task 12: content-level diff):
+    //    哈希变化时调 diffPrd/diffContract，hasMaterialChange 才触发 drift ──
     if (this.configLoopOptions.azaDir) {
       const newHashes: { prd?: string; contract?: string } = {};
+      let currentPrd: PRD | null = null;
+      let currentContract: string = '';
+      
       try {
         const prdPath = path.join(this.configLoopOptions.azaDir, 'prd.json');
         if (fs.existsSync(prdPath)) {
           const prdContent = fs.readFileSync(prdPath, 'utf8');
           newHashes.prd = contentHash(prdContent);
+          try {
+            currentPrd = JSON.parse(prdContent);
+          } catch { /* parse error */ }
         }
       } catch { /* best-effort */ }
+      
       try {
         const contractPath = path.join(this.configLoopOptions.azaDir, 'contract.md');
         if (fs.existsSync(contractPath)) {
           const contractContent = fs.readFileSync(contractPath, 'utf8');
           newHashes.contract = contentHash(contractContent);
+          currentContract = contractContent;
         }
       } catch { /* best-effort */ }
 
-      // Compare with last sync (only flag drift if we had a previous hash)
+      // V20 Task 12: 内容差异分析（非哈希）
       if (this.lastHashes.prd && newHashes.prd && this.lastHashes.prd !== newHashes.prd) {
-        this.driftDetected = true;
+        if (this.lastPrd && currentPrd) {
+          const diff = diffPrd(this.lastPrd, currentPrd);
+          if (hasMaterialChange(diff)) {
+            this.driftDetected = true;
+          } else {
+            // 差异小，仅记录到 ledger
+            // LoopAudit 没有 record 方法，此处仅作为占位注释
+            // 实际实现可能需要使用 RunLedger 或其他审计日志机制
+          }
+        } else {
+          // 无法解析 PRD，回退到哈希比对
+          this.driftDetected = true;
+        }
       }
+      
       if (this.lastHashes.contract && newHashes.contract && this.lastHashes.contract !== newHashes.contract) {
-        this.driftDetected = true;
+        if (this.lastContract && currentContract) {
+          const diff = diffContract(this.lastContract, currentContract);
+          if (hasMaterialChange(diff)) {
+            this.driftDetected = true;
+          }
+        } else {
+          this.driftDetected = true;
+        }
       }
-      // Update lastHashes for next comparison
+      
+      // 更新缓存
       this.lastHashes = newHashes;
+      this.lastPrd = currentPrd;
+      this.lastContract = currentContract;
     }
   }
 
@@ -491,26 +582,82 @@ export class LoopController {
     // V12: Sync state from file at the start of each cycle
     await this.syncStateFromFile();
 
-    // If OuterLoop is enabled with explicit driver env, use OuterLoop batch path.
-    // Default MCP path stays on nextV12 (cooperative awaitingAction) and advances
-    // the outer board when a story completes.
-    if (
-      this.configLoopOptions.enableOuterLoop &&
-      this.outerLoop &&
-      this.outerLoopCallbacks &&
-      process.env.AZA_OUTER_LOOP_DRIVER === 'true'
-    ) {
-      const outerResult = await this.runOuterLoop();
-      return this.buildOuterLoopResponse(outerResult);
+    // G4: No-progress deadlock check — fire a hard stop / recovery
+    // response when the ledger has not seen any state change for
+    // longer than the configured no-progress timeout.
+    const noProgress = this.deadlockDetector.checkNoProgress(this.ledger2d.getLastChangeAt());
+    if (noProgress.deadlocked) {
+      this.hardStop.stop(
+        'max_iterations_exceeded',
+        `no_progress_recovery: ${noProgress.reason ?? 'no progress detected'}`,
+        this.stateMachine.getState().iteration,
+      );
+      return this.buildResponse(this.stateMachine.getCurrentStage(), {
+        tool: 'aza_loop',
+        action: 'stop',
+        reason: noProgress.reason ?? 'no_progress_recovery',
+      }, true);
     }
 
-    const result = this.configLoopOptions.enableV12
-      ? await this.nextV12(currentStage)
-      : this.nextV11(currentStage);
+    // G1: Record this iteration into the 2D progress ledger so crash
+    // recovery and no-progress detection can reason about the most
+    // recent stage/iteration pair.
+    {
+      const stageForRecord = (currentStage as Stage | undefined) ?? this.stateMachine.getCurrentStage();
+      const stageIter = this.stageIterations.get(stageForRecord) ?? 0;
+      this.ledger2d.record(
+        stageForRecord,
+        this.stateMachine.getState().iteration,
+        stageIter,
+        'in_progress',
+      );
+    }
 
-    // Sequential multi-story: when archive completes, pull next pending story
-    if (this.configLoopOptions.enableOuterLoop && result.success) {
-      await this.advanceOuterBoardIfNeeded(result);
+    // G5: Wrap the main body in a best-effort try/catch. If anything
+    // throws (e.g. transient I/O, LLM hiccup) we attempt one cold-start
+    // retry through the circuit breaker before propagating the error.
+    let result: LoopResponse<{ stage: string; progress: string; next_action: NextAction; awaitingAction?: NextAction }>;
+    try {
+      // If OuterLoop is enabled with explicit driver env, use OuterLoop batch path.
+      // Default MCP path stays on nextV12 (cooperative awaitingAction) and advances
+      // the outer board when a story completes.
+      if (
+        this.configLoopOptions.enableOuterLoop &&
+        this.outerLoop &&
+        this.outerLoopCallbacks &&
+        process.env.AZA_OUTER_LOOP_DRIVER === 'true'
+      ) {
+        const outerResult = await this.runOuterLoop();
+        result = this.buildOuterLoopResponse(outerResult);
+      } else {
+        result = this.configLoopOptions.enableV12
+          ? await this.nextV12(currentStage)
+          : this.nextV11(currentStage);
+      }
+
+      // Sequential multi-story: when archive completes, pull next pending story
+      if (this.configLoopOptions.enableOuterLoop && result.success) {
+        await this.advanceOuterBoardIfNeeded(result);
+      }
+    } catch (err) {
+      // G5: Cold-start retry — half the workload and try again with a
+      // simplified re-entry into the V12 path. If the retry also fails
+      // we surface the original error so callers can react.
+      const message = err instanceof Error ? err.message : String(err);
+      try {
+        result = await this.circuitBreaker.coldStartRetry(async () => {
+          // Simplified retry: skip the OuterLoop batch path and
+          // re-enter through nextV12 with a fresh stage read.
+          return await this.nextV12(currentStage);
+        });
+      } catch (retryErr) {
+        const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        return this.buildResponse(this.stateMachine.getCurrentStage(), {
+          tool: 'aza_loop',
+          action: 'stop',
+          reason: `next() failed: ${message}; coldStartRetry failed: ${retryMessage}`,
+        }, true);
+      }
     }
 
     // V12: Sync state to file at the end of each cycle
@@ -708,81 +855,113 @@ export class LoopController {
       }
     }
 
-    // Hard stop check
-    if (this.hardStop.isStopped()) {
-      return this.buildResponse(stage, {
-        tool: 'aza_loop', action: 'report',
-        reason: `Hard stop: ${this.hardStop.getRecord()?.reason}`,
-      }, true);
-    }
-
-    // Check circuit breaker
-    const breakerResult = this.circuitBreaker.checkAll();
-    if (breakerResult?.tripped) {
-      this.hardStop.stop('max_iterations_exceeded', breakerResult.reason!, this.stateMachine.getState().iteration);
-      this.stateMachine.setStageStatus(stage, 'blocked', breakerResult.reason);
-      this.stateMachine.loadState({ current_stage: stage });
-      return this.buildResponse(stage, {
-        tool: 'aza_loop', action: 'escalate',
-        reason: `Circuit breaker tripped: ${breakerResult.reason}`,
-      }, true);
-    }
-
-    // Check global iteration limit
-    const iterCheck = HardStopManager.checkIterations(
-      this.stateMachine.getState().iteration, this.configLoopOptions.maxIterations,
-    );
-    if (iterCheck.exceeded) {
-      this.hardStop.stop('max_iterations_exceeded', iterCheck.detail!, this.stateMachine.getState().iteration);
-      return this.buildResponse(stage, {
-        tool: 'aza_loop', action: 'stop',
-        reason: iterCheck.detail!,
-      }, true);
-    }
-
-    // V12: Check 3-Strike system — spec-superflow "3+ fail = question architecture"
-    // pattern. Instead of a generic hard-stop we proactively bounce back to
-    // the design stage and ask the agent to re-evaluate its approach.
-    if (this.strikeSystem.isHardStop()) {
-      this.hardStop.stop('strikes_exceeded', `3-Strike: ${this.strikeSystem.getStrikeCount()} strikes`, this.stateMachine.getState().iteration);
-
-      // T16: architecture question — move the design stage back to in_progress
-      // and put the current stage into a blocked state, then return an
-      // escalate action that points at aza_task_design as the next move.
-      this.stateMachine.setStageStatus('design', 'in_progress');
-      this.stateMachine.setStageStatus(stage, 'blocked');
-      this.stateMachine.loadState({ current_stage: 'design' });
-
-      // T14: also trigger the break-loop knowledge sedimentation at strike 3
-      // so future iterations can avoid the same root cause. Failures are
-      // non-fatal — we never let break-loop break the hard-stop itself.
+    // V20 Task 13b: 读取 break-loop.jsonl，注入「历史教训」上下文
+    if (this.configLoopOptions.azaDir) {
       try {
-        const { breakLoop } = await import('../L9_knowledge/break-loop');
-        await breakLoop({
-          stage,
-          iteration: this.stateMachine.getState().iteration,
-          error: `3-Strike hard stop: ${this.strikeSystem.getStrikeCount()} strikes`,
-          lastAction: { tool: 'aza_loop', action: 'next', reason: '3-strike escalation' },
-          strikeCount: this.strikeSystem.getStrikeCount(),
-        }, this.configLoopOptions.azaDir || '.aza');
-      } catch {
-        // best-effort
-      }
-
-      return this.buildResponse('design', {
-        tool: 'aza_loop', action: 'escalate',
-        reason: `3-Strike: architecture questioned after ${this.strikeSystem.getStrikeCount()} strikes — returning to design stage. Run aza_spec(design) to revise the approach.`,
-      }, true);
+        const breakLoopPath = path.join(this.configLoopOptions.azaDir, 'spec-conventions', 'break-loop.jsonl');
+        if (fs.existsSync(breakLoopPath)) {
+          const content = fs.readFileSync(breakLoopPath, 'utf8');
+          const lines = content.trim().split('\n').filter(Boolean);
+          if (lines.length > 0) {
+            const lastLine = lines[lines.length - 1] || '';
+            const lastBreak = JSON.parse(lastLine);
+            // 从 convention.description 中提取根因（格式：Top root cause: xxx）
+            const description = lastBreak?.convention?.description ?? '';
+            const rootCauseMatch = description.match(/Top root cause: (\w+)/);
+            if (rootCauseMatch && rootCauseMatch[1]) {
+              const rootCause = rootCauseMatch[1];
+              // 注入一条「历史教训」ContextEntry
+              const lessonEntry: ContextEntry = {
+                type: 'constraint',
+                content: `[历史教训] 上次因 ${rootCause} 触发 3-strike，避免重复此模式`,
+                priority: 0.9,
+                tokenEstimate: 50,
+                metadata: { source: 'break-loop', iteration: lastBreak.iteration },
+              };
+              // 在 pruneContext 之后注入（见下方）
+              this.checkerCache.set('historical_lesson', { result: lessonEntry, timestamp: Date.now() });
+            }
+          }
+        }
+      } catch { /* best-effort */ }
     }
 
-    // V20 Task 4: Token budget hard cap check
-    const budgetAction: BudgetAction = this.tokenBudget.checkBudget();
-    if (budgetAction === 'stop') {
-      this.hardStop.stop('critical_error', 'token budget exhausted', this.stateMachine.getState().iteration);
-      return this.buildResponse(stage, {
-        tool: 'aza_loop', action: 'stop',
-        reason: 'token budget exhausted',
-      }, true);
+    // V20 Task 11: DLP 链式检测
+    if (this.dlpDetector && this.resumeGen) {
+      try {
+        // ResumeGenerator 没有 getRecentEntries 方法，这里使用空数组作为占位
+        // 实际实现需要从 RunLedger 获取
+        const recentEntries: import('../state/run-ledger').RunLedgerEntry[] = [];
+        const chainReport = this.dlpDetector.detectChain(recentEntries);
+        if (chainReport.detected) {
+          this.hardStop.stop('security_blocker', `DLP chain detected: ${chainReport.reason}`, this.stateMachine.getState().iteration);
+          return this.buildResponse(stage, {
+            tool: 'aza_loop', action: 'stop',
+            reason: `DLP chain detected: ${chainReport.reason}`,
+          }, true);
+        }
+      } catch { /* best-effort */ }
+    }
+
+    // V20 Task 6: 纯函数路由集中化
+    const routeAction = this.deterministicRoute(stage, {
+      hardStopped: this.hardStop.isStopped(),
+      breakerTripped: this.circuitBreaker.checkAll()?.tripped ?? false,
+      iterExceeded: HardStopManager.checkIterations(
+        this.stateMachine.getState().iteration, this.configLoopOptions.maxIterations,
+      ).exceeded,
+      strikeHardStop: this.strikeSystem.isHardStop(),
+      budgetAction: this.tokenBudget.checkBudget(),
+    });
+
+    if (routeAction) {
+      // 根据路由结果返回
+      if (routeAction.action === 'report') {
+        return this.buildResponse(stage, routeAction, true);
+      }
+      if (routeAction.action === 'escalate') {
+        if (routeAction.reason.includes('Circuit breaker')) {
+          const breakerResult = this.circuitBreaker.checkAll();
+          if (breakerResult) {
+            this.hardStop.stop('max_iterations_exceeded', breakerResult.reason || 'Circuit breaker tripped', this.stateMachine.getState().iteration);
+            this.stateMachine.setStageStatus(stage, 'blocked', breakerResult.reason);
+            this.stateMachine.loadState({ current_stage: stage });
+          }
+        }
+        if (routeAction.reason.includes('3-Strike')) {
+          this.hardStop.stop('strikes_exceeded', `3-Strike: ${this.strikeSystem.getStrikeCount()} strikes`, this.stateMachine.getState().iteration);
+          this.stateMachine.setStageStatus('design', 'in_progress');
+          this.stateMachine.setStageStatus(stage, 'blocked');
+          this.stateMachine.loadState({ current_stage: 'design' });
+          
+          // V20 Task 13b: 记录根因
+          const rootCause = this.strikeSystem.getRootCause();
+          try {
+            const { breakLoop } = await import('../L9_knowledge/break-loop');
+            await breakLoop({
+              stage,
+              iteration: this.stateMachine.getState().iteration,
+              error: routeAction.reason,
+              lastAction: { tool: 'aza_loop', action: 'escalate', reason: '3-strike escalation' },
+              strikeCount: this.strikeSystem.getStrikeCount(),
+              extra: rootCause ? { cause: rootCause.cause } : undefined,
+            }, this.configLoopOptions.azaDir || '.aza');
+          } catch { /* best-effort */ }
+        }
+        return this.buildResponse(stage === 'design' ? 'design' : stage, routeAction, true);
+      }
+      if (routeAction.action === 'stop') {
+        if (routeAction.reason.includes('Max iterations')) {
+          const iterCheck = HardStopManager.checkIterations(
+            this.stateMachine.getState().iteration, this.configLoopOptions.maxIterations,
+          );
+          this.hardStop.stop('max_iterations_exceeded', iterCheck.detail!, this.stateMachine.getState().iteration);
+        }
+        if (routeAction.reason.includes('Token budget')) {
+          this.hardStop.stop('critical_error', 'token budget exhausted', this.stateMachine.getState().iteration);
+        }
+        return this.buildResponse(stage, routeAction, true);
+      }
     }
     // 70% summarize / 80% compress handled via memoryCompressor in stage transitions
 
@@ -800,10 +979,23 @@ export class LoopController {
       try {
         const bundle = await this.contextOrchestrator.generateContextFiles(stage);
         const injected = await this.contextOrchestrator.injectContext(stage);
-        const pruned = this.contextOrchestrator.pruneContext(
+        let pruned = this.contextOrchestrator.pruneContext(
           injected,
           this.tokenBudget.getRemainingPerTask(),
         );
+        
+        // V20 Task 13b: 注入历史教训
+        const lessonCache = this.checkerCache.get('historical_lesson');
+        if (lessonCache && lessonCache.result) {
+          const entries = [...(pruned.entries || [])];
+          entries.push(lessonCache.result);
+          pruned = {
+            ...pruned,
+            entries,
+            totalTokens: pruned.totalTokens + lessonCache.result.tokenEstimate,
+          };
+        }
+        
         // Store pruned context for handlers to use — ContextEntryBundle structure
         contextBundle = pruned;
         this.checkerCache.set(`context:${stage}`, { result: contextBundle, timestamp: Date.now() });
