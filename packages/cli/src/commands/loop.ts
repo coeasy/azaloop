@@ -40,10 +40,10 @@ export async function loopCommand(options: LoopOptions): Promise<void> {
   const prdTimeoutMs = options.prdTimeoutMs ?? 60_000;
   const projectRoot = path.dirname(azaDir);
   const loader = new ConfigLoader(projectRoot);
-  const config = loader.getDefaultConfig();
+  const config = loader.loadSync();
   const lc = new LoopController({
     maxIterations: config.loop.max_iterations,
-    maxStageIterations: 5,
+    maxStageIterations: config.loop.max_stage_iterations,
     enableV12: true,
     azaDir,
     projectRoot,

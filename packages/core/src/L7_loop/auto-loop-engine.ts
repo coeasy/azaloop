@@ -5,6 +5,8 @@ import { HeartbeatManager, type Heartbeat } from '../state/heartbeat';
 import { StateManager } from '../state/state-manager';
 import { ResumeGenerator } from '../continuity/resume-generator';
 import { CatchupProtocol } from '../continuity/catchup-protocol';
+// R10 第6轮 (D12)：watchdog 恢复事件需落盘到 run-ledger 便于审计追溯
+import { RunLedger } from '../state/run-ledger';
 import { ProjectMemory } from '../L2_memory/project-memory';
 import { LongTermMemory } from '../L2_memory/long-term-memory';
 import {
@@ -65,6 +67,19 @@ export class AutoLoopEngine {
   private longTermMemory: LongTermMemory;
   /** v13 — 12 ruflo workers + 270s heartbeat (P1.1: WorkerScheduler wiring). */
   private workerScheduler: WorkerScheduler | null = null;
+  /**
+   * R10 第6轮 (D12)：运行时看门狗定时器。
+   *
+   * 原先只在启动时清理过期心跳（L143 clearIfStale），运行中不再监测。
+   * 若循环在运行中卡死（如 LLM 超时、文件锁占用），心跳不会更新，
+   * 但也没有恢复机制。watchdog 每 60s 检查一次心跳停滞并触发 catchup。
+   */
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * R10 第6轮 (D12)：watchdog 触发恢复时记录事件到 run-ledger 便于审计。
+   * 与 LoopController.runLedger 共享同一份 run-ledger.jsonl。
+   */
+  private runLedger: RunLedger | null = null;
   private options: Required<AutoLoopEngineOptions>;
   private state: AutoLoopState;
 
@@ -85,6 +100,9 @@ export class AutoLoopEngine {
     this.heartbeatManager = new HeartbeatManager(this.options.azaDir, this.options.heartbeatStaleThresholdMs);
     this.projectMemory = new ProjectMemory(this.options.azaDir);
     this.longTermMemory = new LongTermMemory(this.options.azaDir);
+    // R10 第6轮 (D12)：watchdog 共享 run-ledger.jsonl，best-effort 加载
+    this.runLedger = new RunLedger(this.options.azaDir);
+    this.runLedger.load().catch(() => { /* best-effort: load failure non-fatal */ });
 
     this.loopController = new LoopController({
       azaDir: this.options.azaDir,
@@ -154,6 +172,9 @@ export class AutoLoopEngine {
 
       // 4. 配置 OuterLoop 回调
       this.configureOuterLoop();
+
+      // R10 第6轮 (D12)：启动运行时 watchdog，周期性监测心跳停滞
+      this.startWatchdog();
 
       // v13 — P1.1: start the worker scheduler. The 12 ruflo workers
       // begin observing the loop. Periodic `every-270s` workers are
@@ -338,6 +359,8 @@ export class AutoLoopEngine {
    */
   async stop(): Promise<void> {
     this.state.is_running = false;
+    // R10 第6轮 (D12)：停止 watchdog，避免 stop() 后周期性触发 catchup
+    this.stopWatchdog();
     await this.heartbeatManager.clear();
     // v13 — P1.1: stop the worker scheduler so timers don't keep the
     // event loop alive. Best-effort: if stop throws we log and proceed
@@ -403,5 +426,93 @@ export class AutoLoopEngine {
       humanGate,
       commit,
     });
+  }
+
+  /**
+   * R10 第6轮 (D12)：启动运行时 watchdog 定时器。
+   *
+   * 每 60s 检查一次心跳是否停滞。若停滞说明循环可能卡死（LLM 超时、
+   * 文件锁占用、I/O 阻塞等），触发 CatchupProtocol 重建上下文并记录
+   * 恢复事件到 run-ledger 便于审计。所有 I/O 均为 best-effort，watchdog
+   * 失败不会阻断主循环。
+   */
+  private startWatchdog(): void {
+    if (this.watchdogTimer) {
+      return; // 已启动，避免重复计时器
+    }
+    const WATCHDOG_INTERVAL_MS = 60_000; // 60 秒
+    this.watchdogTimer = setInterval(() => {
+      // 异步轮询，不阻塞 interval 回调
+      this.runWatchdogTick().catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[AutoLoopEngine] watchdog tick failed: ${msg}`);
+      });
+    }, WATCHDOG_INTERVAL_MS);
+    // unref 让 timer 不会单独保持 Node.js 进程存活
+    if (typeof this.watchdogTimer.unref === 'function') {
+      this.watchdogTimer.unref();
+    }
+  }
+
+  /**
+   * R10 第6轮 (D12)：停止 watchdog 定时器。
+   */
+  private stopWatchdog(): void {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+  }
+
+  /**
+   * R10 第6轮 (D12)：watchdog 单次检查逻辑。
+   *
+   * 1. 检测心跳是否停滞
+   * 2. 若停滞，触发 CatchupProtocol.run() 重建上下文
+   * 3. 刷新心跳（避免 watchdog 下一周期再次判定停滞）
+   * 4. 记录「心跳停滞恢复」事件到 run-ledger
+   */
+  private async runWatchdogTick(): Promise<void> {
+    if (!this.state.is_running) return;
+    let isStale = false;
+    try {
+      isStale = await this.heartbeatManager.isStale();
+    } catch {
+      return; // 心跳检测异常时不触发恢复，等下次 tick
+    }
+    if (!isStale) return;
+
+    console.warn('[AutoLoopEngine] watchdog: heartbeat stale, triggering catchup recovery');
+
+    // 触发 catchup 重建上下文
+    try {
+      if (this.catchupProtocol) {
+        await this.catchupProtocol.run();
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[AutoLoopEngine] watchdog catchup failed: ${msg}`);
+    }
+
+    // 刷新心跳避免下一周期再次判定停滞
+    try {
+      await this.heartbeatManager.touch({ iteration: this.state.iteration });
+    } catch {
+      /* best-effort */
+    }
+
+    // 记录恢复事件到 run-ledger 便于审计追溯
+    try {
+      await this.runLedger?.append({
+        tool: 'auto-loop-engine',
+        action: 'watchdog_recovery',
+        stage: this.state.current_story ?? 'unknown',
+        iteration: this.state.iteration,
+        summary: 'Heartbeat stale detected by watchdog; catchup triggered to recover context',
+        success: true,
+      });
+    } catch {
+      /* best-effort: ledger append failure never blocks watchdog */
+    }
   }
 }

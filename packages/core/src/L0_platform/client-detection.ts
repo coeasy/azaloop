@@ -102,3 +102,42 @@ export function getClient(name: string): ClientInfo {
 export function getAllClients(): ClientInfo[] {
   return [...CLIENTS];
 }
+
+/**
+ * Detect whether the client has switched since the last recorded session.
+ *
+ * Compares the currently detected client against `lastClient` (typically read
+ * from HEARTBEAT.yaml or RESUME.md). Returns a structured result so callers
+ * (AutoLoopEngine, MCP boot, CLI continue) can log the switch and adjust
+ * resume behavior.
+ *
+ * R10 第1轮：跨客户端自动续航触发器
+ */
+export interface ClientSwitchResult {
+  /** True when the current client differs from the last recorded one. */
+  switched: boolean;
+  /** The client recorded in the previous session (may be 'unknown'). */
+  previous_client: string;
+  /** The client detected in the current session. */
+  current_client: string;
+  /** Whether the current client is a different tier (may need degradation). */
+  tier_changed: boolean;
+  /** The detected ClientInfo for the current session. */
+  current_info: ClientInfo;
+}
+
+export function detectClientSwitch(lastClient?: string | null): ClientSwitchResult {
+  const current = detectClient();
+  const currentName = current.name;
+  const lastName = (lastClient || '').trim() || 'unknown';
+  const switched = lastName !== 'unknown' && lastName !== currentName;
+  const lastInfo = getClient(lastName);
+  const tierChanged = switched && (lastInfo.tier !== current.tier);
+  return {
+    switched,
+    previous_client: lastName,
+    current_client: currentName,
+    tier_changed: tierChanged,
+    current_info: current,
+  };
+}

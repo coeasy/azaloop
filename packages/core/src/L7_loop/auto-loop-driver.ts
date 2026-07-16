@@ -177,6 +177,26 @@ export class AutoLoopDriver {
   }
 
   /**
+   * V20 Task 14: Re-sync the driver's current stage from the on-disk
+   * STATE.yaml before each step. This fixes the cross-session recovery
+   * inconsistency where a freshly rebuilt controller (after a cache clear
+   * or crash) reported the default `open` stage instead of the real stage
+   * that was persisted to disk (e.g. `build` in_progress).
+   *
+   * Without this, `step()` would pass the stale in-memory `currentStage`
+   * into `next()`, overriding the healed disk stage inside `nextV12`.
+   */
+  async syncStageFromDisk(): Promise<void> {
+    try {
+      await this.loopController.syncStateFromFile();
+      const stage = this.loopController.stateMachine.getCurrentStage();
+      if (stage) this.currentStage = stage;
+    } catch {
+      // best-effort: a missing STATE.yaml just keeps the default stage
+    }
+  }
+
+  /**
    * Run the full auto-loop synchronously until completion.
    *
    * Flow:
@@ -281,6 +301,26 @@ export class AutoLoopDriver {
     }
 
     this.status = 'running';
+
+    // R10 第6轮 (D12)：在 syncStageFromDisk 之前检测心跳停滞。
+    // 若停滞说明本次 step 是从卡死状态中恢复（watchdog 已触发 catchup，
+    // 或外部手动恢复），此时 syncStageFromDisk 的恢复语义需要被记录。
+    // best-effort：心跳检测失败不阻断主循环。
+    if (this.heartbeatManager) {
+      try {
+        const stale = await this.heartbeatManager.isStale();
+        if (stale) {
+          console.warn('[AutoLoopDriver] step() invoked with stale heartbeat — recovering from stall');
+        }
+      } catch {
+        /* best-effort: isStale failure non-fatal */
+      }
+    }
+
+    // V20 Task 14: re-sync the current stage from disk so a recovered
+    // session resumes at the real persisted stage (build/verify/...) and
+    // not the fresh default `open` (which would re-trigger the PRD gate).
+    await this.syncStageFromDisk();
 
     // G3: When a `.aza/resume.json` is present, sync it into the
     // structured task-board snapshot so downstream consumers see the

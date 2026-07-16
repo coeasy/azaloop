@@ -397,11 +397,30 @@ function reviewDesign(prd: PRD): RoleFinding[] {
   return out;
 }
 
+/**
+ * R10 第5轮 (D13)：模块级 LLM 响应缓存。
+ *
+ * runMultiRolePrdReview 是确定性的——相同 PRD 内容永远产生相同 review 结果。
+ * 缓存 review 结果可以避免对未修改的 PRD 重复执行 4 角色 × 多规则扫描，
+ * 显著减少 token 消耗和计算开销（尤其在大循环中反复触发 review 时）。
+ */
+import { PromptResponseCache } from '../L2_memory/prompt-cache';
+const reviewCache = new PromptResponseCache({ ttlMs: 2 * 60 * 60 * 1000 }); // 2h TTL
+
 /** Run CEO/QA/Eng/Design review; all P0 must pass. (L1 fast mode — regex-based) */
 export function runMultiRolePrdReview(
   prd: PRD,
   options?: RunMultiRolePrdReviewOptions,
 ): MultiRoleReviewResult {
+  // R10 第5轮 (D13)：命中缓存则直接返回，跳过 4 角色扫描
+  const prdBlob = JSON.stringify(prd);
+  const cached = reviewCache.get(prdBlob, { review: 'multi-role' });
+  if (cached) {
+    try {
+      return JSON.parse(cached) as MultiRoleReviewResult;
+    } catch { /* cache corrupted — re-run */ }
+  }
+
   const findings = [...reviewCeo(prd), ...reviewQa(prd), ...reviewEng(prd), ...reviewDesign(prd)];
   const p0Fail = findings.filter((f) => !f.passed && f.severity === 'P0').length;
   const p1Fail = findings.filter((f) => !f.passed && f.severity === 'P1').length;
@@ -418,6 +437,9 @@ export function runMultiRolePrdReview(
       ? `Multi-role review PASS (score ${score}) — CEO/QA/Eng/Design aligned`
       : `Multi-role review FAIL — ${p0Fail} P0 / ${p1Fail} P1 findings`,
   };
+
+  // R10 第5轮 (D13)：写入缓存
+  reviewCache.set(prdBlob, JSON.stringify(result), { review: 'multi-role' });
 
   // G2: best-effort file handoff — when an `azaDir` is provided,
   // write one handoff per role so the integration step can pick up

@@ -81,19 +81,22 @@ export class PrdQualityScorer {
   }
 
   /**
-   * 维度1：规范完整性（30分）
-   * 
-   * 检查项：
-   * - 核心要素完整率（15分）：overview, goals, stories, AC, architecture, risks
-   * - 术语合规率（10分）：无歧义术语、无未定义缩写
-   * - 模板符合度（5分）：符合 PRD Schema 结构
-   */
+ * 维度1：规范完整性（30分）
+ *
+ * 检查项：
+ * - 核心要素完整率（12分）：overview, goals, stories, AC, architecture, risks
+ * - 术语合规率（8分）：无歧义术语、无未定义缩写
+ * - 模板符合度（5分）：符合 PRD Schema 结构
+ * - 竞品差异化（5分）：R10 第10轮 (D9) 新增——overview 含竞品 URL + 差异化说明
+ *
+ * R10 第10轮 (D9) 重平衡：原 15+10+5=30 → 12+8+5+5=30，总分不变。
+ */
   private scoreCompleteness(prd: PRD): DimensionScore {
     const details: string[] = [];
     let score = 0;
     const maxScore = 30;
 
-    // 核心要素完整率（15分）
+    // 核心要素完整率（12分）— R10 第10轮：从 15 分降至 12 分，腾 5 分给竞品差异化
     const coreElements = [
       { name: 'overview', present: !!prd.overview && prd.overview.length >= 100 },
       { name: 'goals', present: !!prd.goals && prd.goals.length >= 2 },
@@ -107,25 +110,25 @@ export class PrdQualityScorer {
 
     const presentCount = coreElements.filter(e => e.present).length;
     const completenessRatio = presentCount / coreElements.length;
-    const coreScore = Math.round(completenessRatio * 15);
+    const coreScore = Math.round(completenessRatio * 12);
     score += coreScore;
 
     if (completenessRatio < 1) {
       const missing = coreElements.filter(e => !e.present).map(e => e.name);
-      details.push(`缺少核心要素：${missing.join(', ')}（-${15 - coreScore}分）`);
+      details.push(`缺少核心要素：${missing.join(', ')}（-${12 - coreScore}分）`);
     } else {
-      details.push(`✓ 核心要素完整（15/15分）`);
+      details.push(`✓ 核心要素完整（12/12分）`);
     }
 
-    // 术语合规率（10分）
+    // 术语合规率（8分）— R10 第10轮：从 10 分降至 8 分
     const terminologyIssues = this.checkTerminology(prd);
-    const terminologyScore = Math.max(0, 10 - terminologyIssues.length * 2);
+    const terminologyScore = Math.max(0, 8 - terminologyIssues.length * 2);
     score += terminologyScore;
 
     if (terminologyIssues.length > 0) {
-      details.push(`发现 ${terminologyIssues.length} 个术语问题（-${10 - terminologyScore}分）：${terminologyIssues.slice(0, 3).join(', ')}`);
+      details.push(`发现 ${terminologyIssues.length} 个术语问题（-${8 - terminologyScore}分）：${terminologyIssues.slice(0, 3).join(', ')}`);
     } else {
-      details.push(`✓ 术语使用规范（10/10分）`);
+      details.push(`✓ 术语使用规范（8/8分）`);
     }
 
     // 模板符合度（5分）
@@ -139,12 +142,68 @@ export class PrdQualityScorer {
       details.push(`✓ 符合 Schema 规范（5/5分）`);
     }
 
+    // R10 第10轮 (D9) 新增：竞品差异化（5分）
+    // 借鉴 check-prd-skill「competitive_analysis」：检查 overview 是否含竞品 URL + 差异化说明
+    const competitiveDiff = this.checkCompetitiveDifferentiation(prd);
+    score += competitiveDiff.score;
+    if (competitiveDiff.score < 5) {
+      details.push(`竞品差异化不足（-${5 - competitiveDiff.score}分）：${competitiveDiff.reason}`);
+    } else {
+      details.push(`✓ 竞品差异化充分（5/5分）`);
+    }
+
     return {
       score,
       maxScore,
       percentage: Math.round((score / maxScore) * 100),
       details,
     };
+  }
+
+  /**
+   * R10 第10轮 (D9)：检查 PRD 的竞品差异化充分性。
+   *
+   * 借鉴 check-prd-skill「competitive_analysis」规则：
+   * - overview 必须含 ≥2 个 github URL（2 分）
+   * - overview 必须含「差异化/differentiat/壁垒」关键词（2 分）
+   * - goals 必须有 ≥1 条与差异化相关（1 分）
+   *
+   * @returns score 0-5, reason 缺失说明
+   */
+  private checkCompetitiveDifferentiation(prd: PRD): { score: number; reason: string } {
+    let score = 0;
+    const reasons: string[] = [];
+    const overview = prd.overview || '';
+
+    // 1. 竞品 URL 数量（2 分）
+    const urlMatches = overview.match(/https?:\/\/github\.com\/[\w.-]+\/[\w.-]+/gi) || [];
+    if (urlMatches.length >= 2) {
+      score += 2;
+    } else if (urlMatches.length === 1) {
+      score += 1;
+      reasons.push('竞品 URL 仅 1 个（需 ≥2）');
+    } else {
+      reasons.push('overview 无竞品 GitHub URL');
+    }
+
+    // 2. 差异化关键词（2 分）
+    const diffKeywords = /differentiat|差异化|壁垒|独特价值|unique value|我们的优势|our advantage/i;
+    if (diffKeywords.test(overview)) {
+      score += 2;
+    } else {
+      reasons.push('overview 无差异化说明关键词');
+    }
+
+    // 3. goals 含差异化目标（1 分）
+    const goalDiffPattern = /differentiat|差异化|竞品|壁垒|超越|absorb competitive/i;
+    const hasDiffGoal = prd.goals.some((g) => goalDiffPattern.test(g));
+    if (hasDiffGoal) {
+      score += 1;
+    } else {
+      reasons.push('goals 无差异化相关目标');
+    }
+
+    return { score, reason: reasons.join('；') };
   }
 
   /**

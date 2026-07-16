@@ -1,5 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
+// R10 第9轮 (D14)：接入向量记忆——ruflo HNSW 思路落地
+import type { VectorStore } from './stores';
 
 export interface EpisodicMemory {
   id: string;
@@ -11,12 +13,27 @@ export interface EpisodicMemory {
   created_at: string;
 }
 
+/**
+ * R10 第9轮 (D14)：ProjectMemory 可选配置。
+ *
+ * - `vectorStore`：若提供，每条 episodic memory 写入时同步索引到向量存储，
+ *   支持基于语义相似度的检索（替代纯字符串 substring 匹配）。
+ *   借鉴 ruflo AgentDB：历史推理可被向量召回复用，减少重复 LLM 推理。
+ */
+export interface ProjectMemoryOptions {
+  /** 向量存储实例（可选）。提供后 record() 会同步 upsert，searchVector() 可用 */
+  vectorStore?: VectorStore;
+}
+
 export class ProjectMemory {
   private episodes: EpisodicMemory[] = [];
   private memoryDir: string;
+  /** R10 第9轮 (D14)：可选向量索引，支持语义检索 */
+  private vectorStore: VectorStore | null;
 
-  constructor(baseDir: string) {
+  constructor(baseDir: string, options: ProjectMemoryOptions = {}) {
     this.memoryDir = path.join(baseDir, 'memory', 'episodic');
+    this.vectorStore = options.vectorStore ?? null;
   }
 
   async init(): Promise<void> {
@@ -31,6 +48,15 @@ export class ProjectMemory {
     };
     this.episodes.push(entry);
     await this.persist(entry);
+    // R10 第9轮 (D14)：同步索引到向量存储，便于后续语义检索
+    if (this.vectorStore) {
+      try {
+        const doc = `${entry.summary}\n${entry.details}\n${entry.tags.join(' ')}`;
+        this.vectorStore.upsert(`episodic:${entry.id}`, doc);
+      } catch {
+        /* best-effort：向量索引失败不阻断记忆写入 */
+      }
+    }
     return entry;
   }
 
@@ -55,6 +81,48 @@ export class ProjectMemory {
 
   async getAll(): Promise<EpisodicMemory[]> {
     return [...this.episodes];
+  }
+
+  /**
+   * R10 第9轮 (D14)：基于语义相似度检索历史 episodic memory。
+   *
+   * 借鉴 ruflo AgentDB：跨会话/跨 story 复用历史推理。
+   * 调用方传入自然语言 query（如当前 stage + story 标题），
+   * 返回 top-K 最相关的 episodic memory 条目。
+   *
+   * 若未配置 vectorStore，回退到字符串 search()，保证向后兼容。
+   *
+   * @param query  自然语言查询（如 "build story-001 implementation context"）
+   * @param k      返回条数上限（默认 5）
+   * @returns 按 similarity 降序排列的 episodic memory 列表
+   */
+  async searchVector(query: string, k: number = 5): Promise<EpisodicMemory[]> {
+    if (!this.vectorStore) {
+      // 回退到字符串搜索
+      return this.search(query, k);
+    }
+    try {
+      const results = this.vectorStore.search(query, k);
+      if (results.length === 0) return [];
+      // 从结果 key（格式：episodic:<id>）解析回 episode id
+      const ids = results
+        .map((r) => {
+          const m = r.key.match(/^episodic:(.+)$/);
+          return m ? m[1] : null;
+        })
+        .filter((x): x is string => x !== null);
+      // 按 similarity 顺序从内存 episodes 中查找
+      const byId = new Map(this.episodes.map((e) => [e.id, e]));
+      const out: EpisodicMemory[] = [];
+      for (const id of ids) {
+        const ep = byId.get(id);
+        if (ep) out.push(ep);
+      }
+      return out;
+    } catch {
+      // 向量检索异常时回退到字符串搜索
+      return this.search(query, k);
+    }
   }
 
   private async persist(entry: EpisodicMemory): Promise<void> {
@@ -88,6 +156,17 @@ export class ProjectMemory {
       }
     } catch {
       // Directory doesn't exist yet
+    }
+    // R10 第9轮 (D14)：加载完成后重建向量索引，确保 searchVector 可用
+    if (this.vectorStore && this.episodes.length > 0) {
+      for (const ep of this.episodes) {
+        try {
+          const doc = `${ep.summary}\n${ep.details}\n${ep.tags.join(' ')}`;
+          this.vectorStore.upsert(`episodic:${ep.id}`, doc);
+        } catch {
+          /* best-effort：单条索引失败不阻断整体加载 */
+        }
+      }
     }
   }
 

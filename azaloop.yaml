@@ -7,8 +7,14 @@ project:
 
 loop:
   max_iterations: 50
+  # R10/R11: 每个阶段（maker→checker→optimizer）的最大相位轮数。
+  # 真实工程需多轮「写码→测试→修复」，从硬编码 5 改为可配置，默认 20；
+  # 优化/重构类项目建议 30~50 以容纳更多修复迭代。
+  max_stage_iterations: 30
   deadlock_threshold: 3
   hard_stop_on_security: true
+  # 外层循环（按 PRD 故事批量推进 board）：当前客户端开启全自动需置 true
+  outer_enabled: true
 
 memory:
   enabled: true

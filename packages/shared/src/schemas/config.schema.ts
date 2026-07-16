@@ -24,6 +24,12 @@ export const MemoryConfigSchema = z.object({
 
 export const LoopConfigSchema = z.object({
   max_iterations: z.number().int().default(50),
+  /** Max phase iterations per stage (maker→checker→optimizer cycles).
+   *  Real builds need multiple write→test→fix cycles, so default is 20
+   *  (was hardcoded to 5, which was too low for genuine engineering work). */
+  max_stage_iterations: z.number().int().default(20),
+  /** Outer loop (sequential story batch over the board). Default on; set false to disable. */
+  outer_enabled: z.boolean().default(true),
   deadlock_threshold: z.number().int().default(3),
   hard_stop_on_security: z.boolean().default(true),
 });

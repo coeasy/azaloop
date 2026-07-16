@@ -5,6 +5,8 @@ import { createHash } from 'crypto';
 import { StateSchema, type State } from '@azaloop/shared';
 import { computeChecksum, verifyChecksum } from './checksum';
 import type { StageStatus } from '@azaloop/shared';
+// R10 第7轮 (D7)：单一来源 — schema 版本由 migrations/registry 集中声明
+import { getLatestSchemaVersion, hasMigrationPath } from './migrations/registry';
 
 // ── Re-exported from merged run-state.ts ──
 // Machine-owned run state (run-state.json) — scripts only write, agents only read.
@@ -34,7 +36,7 @@ export interface RunState {
 
 export interface AuditEntry {
   timestamp: string;
-  type: 'dp_transition' | 'state_transition' | 'gate_pass' | 'gate_fail' | 'circuit_breaker' | 'hard_stop' | 'strike' | 'stage_complete' | 'convention_written' | 'context_injection' | 'run_start' | 'run_end';
+  type: 'dp_transition' | 'state_transition' | 'gate_pass' | 'gate_fail' | 'circuit_breaker' | 'hard_stop' | 'strike' | 'stage_complete' | 'convention_written' | 'context_injection' | 'run_start' | 'run_end' | 'minor_drift';
   source: string;
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
@@ -316,7 +318,24 @@ export class StateManager {
     await fs.mkdir(path.dirname(filePath), { recursive: true }).catch(() => {});
     const tmp = filePath + '.tmp';
     await fs.writeFile(tmp, content, 'utf8');
-    await fs.rename(tmp, filePath);
+    try {
+      await fs.rename(tmp, filePath);
+    } catch (renameErr: any) {
+      // 跨平台健壮性：Windows 上目标文件可能被防病毒/索引服务占用，
+      // 导致 rename 抛 EPERM/EBUSY。降级为直接覆盖写入（仍保证内容完整），
+      // 避免整个循环因一次 STATE 写失败而崩溃中断。
+      if (renameErr?.code === 'EPERM' || renameErr?.code === 'EBUSY') {
+        try {
+          await fs.unlink(filePath).catch(() => {});
+          await fs.rename(tmp, filePath);
+        } catch {
+          // 仍失败 → 最后退路：直接 writeFile 覆盖目标（不保证原子性，但绝不抛错中断循环）
+          await fs.writeFile(filePath, content, 'utf8').catch(() => {});
+        }
+      } else {
+        throw renameErr;
+      }
+    }
   }
 
   /**
@@ -324,8 +343,12 @@ export class StateManager {
    * the value here whenever `StateSchema` changes in a non-backward-
    * compatible way and add a `state/migrations/v{N}-to-v{N+1}.ts`
    * transformer.
+   *
+   * R10 第7轮 (D7)：值由 migrations/registry.ts 集中管理（单一来源）。
+   * 添加新迁移时只需在 registry 的 MIGRATIONS 数组追加一项，本字段会
+   * 自动同步到最新值，无需手动维护两处。
    */
-  static readonly CURRENT_STATE_VERSION = 2;
+  static readonly CURRENT_STATE_VERSION = getLatestSchemaVersion();
 
   /**
    * v14 — P9.3: read the `schema_version` written in STATE.yaml.
@@ -401,6 +424,21 @@ export class StateManager {
     if (version >= target) {
       // Re-parse to make sure callers see the latest in-memory state.
       this.state = StateSchema.parse(rawState);
+      return this.state;
+    }
+    // R10 第7轮 (D7)：预检迁移路径完整性。
+    // 若 registry 声明路径不完整，提前返回避免 migrateState 在运行时才发现
+    // 缺失迁移文件（此时部分状态可能已被改写）。降级使用未迁移状态。
+    if (!hasMigrationPath(version, target)) {
+      console.warn(
+        `[StateManager] no migration path from v${version} to v${target}; ` +
+          `falling back to un-migrated state. Consider adding migrations/v${version}-to-v${version + 1}.ts`,
+      );
+      try {
+        this.state = StateSchema.parse(rawState);
+      } catch {
+        // Schema parse failure — keep in-memory default
+      }
       return this.state;
     }
     try {

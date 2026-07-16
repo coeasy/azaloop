@@ -23,11 +23,12 @@ const UNIFIED = [
   'aza_finish',
   'aza_memory',
   'aza_meta',
+  'aza_auto',
 ];
 
 describe('v0.2 converged tool-registry', () => {
   it('exposes exactly 8 unified tools', () => {
-    expect(TOOL_REGISTRY.length).toBe(8);
+    expect(TOOL_REGISTRY.length).toBe(9);
     expect(getToolNames().sort()).toEqual([...UNIFIED].sort());
   });
 
@@ -52,7 +53,7 @@ describe('v0.2 converged tool-registry', () => {
   });
 
   it('formatted list has 8 entries', () => {
-    expect(getFormattedToolDefinitions().length).toBe(8);
+    expect(getFormattedToolDefinitions().length).toBe(9);
   });
 
   it('legacy names resolve to unified tools', () => {

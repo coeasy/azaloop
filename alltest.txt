@@ -1,0 +1,641 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90mP:/github_public/azaloop[39m
+
+07:58:38 [vite] (ssr) warning: str.includes is not a function
+  Plugin: vite:dynamic-import-vars
+  File: P:/github_public/azaloop/packages/core/src/state/state-manager.ts
+(node:5664) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:7948) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:21244) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:17744) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stderr | tests/integration.test.ts > AzaLoop 0.1.0 Integration > Task 12: Hook Events > createPreToolHandler: blocks when hard stop
+[Hook:pre-tool] Hard stop active — blocking tool call: test
+
+stderr | tests/integration.test.ts > AzaLoop 0.1.0 Integration > Task 12: Hook Events > createOnStopHandler: writes resume
+[Hook:on-stop] Stopping session at 2026-07-15T23:58:40.006Z
+
+stderr | tests/integration.test.ts > AzaLoop 0.1.0 Integration > Task 12: Hook Events > createOnStopHandler: writes resume
+[Hook:on-stop] Resume file written for stage: design
+
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[31mx[39m[33m[39m[31mx[39m[33m[39m[32m·[39m[33m[39m[31mx[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[31mx[39m[33m[39m[32m·[39m[33m[39m[31mx[39m[90mstdout[2m | tests/integration.test.ts[2m > [22m[2mAzaLoop 0.1.0 Integration[2m > [22m[2mFull E2E: 输入→PRD→循环→续航[2m > [22m[2mE2E: Full pipeline from input to archive
+[22m[39m  PRD quality score: 94% (28/33)
+
+[33m[39m[32m·[39m[33m[39m[31mx[39m[33m[39m[31mx[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[31mx[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[90mstdout[2m | tests/integration.test.ts[2m > [22m[2mAzaLoop 0.1.0 Integration[2m > [22m[2mFull E2E: 输入→PRD→循环→续航[2m > [22m[2mE2E: Cross-session resume
+[22m[39m  ✓ E2E: Cross-session resume verified (stage preserved, story preserved)
+
+(node:13292) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stderr | tests/integration/main-pipeline-integration.test.ts > Main-pipeline integration — Trae full-auto loop > bridge 1: PRDReviewGate.approve(source=openspec) writes the four-piece set
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/main-pipeline-integration.test.ts > Main-pipeline integration — Trae full-auto loop > bridge 1: PRDReviewGate.approve(source=openspec) writes the four-piece set
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\aza-pipeline-BLpGrb\.aza/todolist.json
+
+(node:6980) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stderr | tests/integration/main-pipeline-integration.test.ts > Main-pipeline integration — Trae full-auto loop > bridge 2: ExecutionContract is written on approve (T17/T38)
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/main-pipeline-integration.test.ts > Main-pipeline integration — Trae full-auto loop > bridge 2: ExecutionContract is written on approve (T17/T38)
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\aza-pipeline-5clI56\.aza/todolist.json
+
+stderr | tests/integration/trae-auto-loop-full.test.ts > Trae E2E — full auto-loop pipeline > Full pipeline: review(HARD-GATE) → approve(openspec) → loop×5 → done
+[AzaLoop][A1] PrdQualityGate: score=81, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/trae-auto-loop-full.test.ts > Trae E2E — full auto-loop pipeline > Full pipeline: review(HARD-GATE) → approve(openspec) → loop×5 → done
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\aza-trae-e2e-ZE3ndQ\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > review() > should generate a PRD summary with needs_user_approval=true
+[AzaLoop][A1] PrdQualityGate: score=85, grade=B, passed=false, blockers=8
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > review() > should generate a PRD summary with needs_user_approval=true
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-test-RnDzMA\.aza/todolist.json
+
+stderr | tests/integration/trae-auto-loop.test.ts > AzaLoop V12.2 Auto-Loop E2E > 1. PRD 先行流程: review() 生成待审批 PRD 摘要
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/trae-auto-loop.test.ts > AzaLoop V12.2 Auto-Loop E2E > 1. PRD 先行流程: review() 生成待审批 PRD 摘要
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-e2e-Shnoav\.aza/todolist.json
+
+stderr | tests/integration/trae-auto-loop-full.test.ts > Trae E2E — full auto-loop pipeline > Non-openspec path: aza-prd approval does NOT create OpenSpec artifacts
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/trae-auto-loop-full.test.ts > Trae E2E — full auto-loop pipeline > Non-openspec path: aza-prd approval does NOT create OpenSpec artifacts
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\aza-trae-e2e-xJt8ll\.aza/todolist.json
+
+stderr | tests/integration/trae-auto-loop.test.ts > AzaLoop V12.2 Auto-Loop E2E > 2. 用户确认 PRD: approve() 返回 aza_loop(full) 入口
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/trae-auto-loop.test.ts > AzaLoop V12.2 Auto-Loop E2E > 2. 用户确认 PRD: approve() 返回 aza_loop(full) 入口
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-e2e-tkaC51\.aza/todolist.json
+
+stderr | tests/integration/trae-auto-loop.test.ts > AzaLoop V12.2 Auto-Loop E2E > 4. MCPEventBridge 集成: wrapTool 追加 next_action 且保留工具自带 next_action
+[Hook] Pre-tool: aza_task_implement
+
+stderr | tests/integration/trae-auto-loop.test.ts > AzaLoop V12.2 Auto-Loop E2E > 4. MCPEventBridge 集成: wrapTool 追加 next_action 且保留工具自带 next_action
+[Hook] Post-tool: aza_task_implement — iteration: 0, progress: 0%
+
+stderr | tests/integration/trae-auto-loop-full.test.ts > Trae E2E — full auto-loop pipeline > Slug normalization: titles with punctuation produce kebab-case slugs
+[AzaLoop][A1] PrdQualityGate: score=85, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/trae-auto-loop-full.test.ts > Trae E2E — full auto-loop pipeline > Slug normalization: titles with punctuation produce kebab-case slugs
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\aza-trae-e2e-bohnFz\.aza/todolist.json
+
+stderr | tests/integration/trae-auto-loop.test.ts > AzaLoop V12.2 Auto-Loop E2E > 7. PRD 超时确认: autoApproveOnTimeout() 自动审批
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/trae-auto-loop.test.ts > AzaLoop V12.2 Auto-Loop E2E > 7. PRD 超时确认: autoApproveOnTimeout() 自动审批
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-e2e-gMoACq\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > review() — HARD-GATE detection > enters HARD-GATE when skillMeta.requires_approval=true
+[AzaLoop][A1] PrdQualityGate: score=83, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > review() — HARD-GATE detection > enters HARD-GATE when skillMeta.requires_approval=true
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-hardgate-j8jeSO\.aza/todolist.json
+
+stderr | tests/integration/trae-auto-loop.test.ts > AzaLoop V12.2 Auto-Loop E2E > 8. PRD 修改流程: modify() 根据反馈重新生成待审批 PRD
+[AzaLoop][A1] PrdQualityGate: score=85, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/trae-auto-loop.test.ts > AzaLoop V12.2 Auto-Loop E2E > 8. PRD 修改流程: modify() 根据反馈重新生成待审批 PRD
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-e2e-vQPhri\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > review() — HARD-GATE detection > does NOT enter HARD-GATE when requires_approval=false
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > review() — HARD-GATE detection > does NOT enter HARD-GATE when requires_approval=false
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-hardgate-oLlru2\.aza/todolist.json
+
+stderr | tests/integration/trae-auto-loop.test.ts > AzaLoop V12.2 Auto-Loop E2E > 8. PRD 修改流程: modify() 根据反馈重新生成待审批 PRD
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/trae-auto-loop.test.ts > AzaLoop V12.2 Auto-Loop E2E > 8. PRD 修改流程: modify() 根据反馈重新生成待审批 PRD
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-e2e-vQPhri\.aza/todolist.json
+
+stderr | tests/integration/main-pipeline-integration.test.ts > Main-pipeline integration — Trae full-auto loop > bridge 3: HARD-GATE rejects approval without red-flag answers
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/main-pipeline-integration.test.ts > Main-pipeline integration — Trae full-auto loop > bridge 3: HARD-GATE rejects approval without red-flag answers
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\aza-pipeline-twOz6p\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > review() — HARD-GATE detection > defaults to source="openspec" when not specified
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > review() — HARD-GATE detection > defaults to source="openspec" when not specified
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-hardgate-6hc0zk\.aza/todolist.json
+
+stderr | tests/integration/openspec-executioncontract-bridge.test.ts > v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract > 4) PRDReviewGate.approve() with source=openspec returns data with openspec_path
+[AzaLoop][A1] PrdQualityGate: score=73, grade=C, passed=false, blockers=7
+
+stderr | tests/integration/openspec-executioncontract-bridge.test.ts > v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract > 4) PRDReviewGate.approve() with source=openspec returns data with openspec_path
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\aza-bridge-O4AN2u\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > review() — HARD-GATE detection > honors source="aza-prd" when caller opts out of openspec
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > review() — HARD-GATE detection > honors source="aza-prd" when caller opts out of openspec
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-hardgate-IdHv9W\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > approve() — HARD-GATE answers > rejects approve() with no answers when HARD-GATE is active
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > approve() — HARD-GATE answers > rejects approve() with no answers when HARD-GATE is active
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-hardgate-AOonWI\.aza/todolist.json
+
+stderr | tests/integration/openspec-executioncontract-bridge.test.ts > v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract > 5) PRDReviewGate.approve() with source=aza-prd does NOT set openspec_path
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/openspec-executioncontract-bridge.test.ts > v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract > 5) PRDReviewGate.approve() with source=aza-prd does NOT set openspec_path
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\aza-bridge-CDs8YV\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > review() > should set pending review after review() call
+[AzaLoop][A1] PrdQualityGate: score=82, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > review() > should set pending review after review() call
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-test-OpZ5qi\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > approve() — HARD-GATE answers > rejects approve() with partial answers
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > approve() — HARD-GATE answers > rejects approve() with partial answers
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-hardgate-lDXEGV\.aza/todolist.json
+
+stderr | tests/integration/openspec-executioncontract-bridge.test.ts > v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract > 5b) default review source writes openspec_path
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/openspec-executioncontract-bridge.test.ts > v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract > 5b) default review source writes openspec_path
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\aza-bridge-czLScG\.aza/todolist.json
+
+stderr | tests/integration/main-pipeline-integration.test.ts > Main-pipeline integration — Trae full-auto loop > bridge 10: end-to-end — full main pipeline (review → approve → loop → done)
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/main-pipeline-integration.test.ts > Main-pipeline integration — Trae full-auto loop > bridge 10: end-to-end — full main pipeline (review → approve → loop → done)
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\aza-pipeline-YmA6es\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > approve() — HARD-GATE answers > rejects approve() with empty / vacuous answers
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > approve() — HARD-GATE answers > rejects approve() with empty / vacuous answers
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-hardgate-SqYXJb\.aza/todolist.json
+
+(node:3900) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > approve() > should return next_action.tool=aza_loop
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=8
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > approve() > should return next_action.tool=aza_loop
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-test-fDSQKY\.aza/todolist.json
+
+stderr | tests/integration/openspec-executioncontract-bridge.test.ts > v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract > 6) PRDReviewGate.approve() HARD-GATE with answers is approved
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/integration/openspec-executioncontract-bridge.test.ts > v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract > 6) PRDReviewGate.approve() HARD-GATE with answers is approved
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\aza-bridge-5Mk0tJ\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > approve() — HARD-GATE answers > approves when all 3 red flags are answered with substantive text
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > approve() — HARD-GATE answers > approves when all 3 red flags are answered with substantive text
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-hardgate-saBXqc\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > approve() > should clear pending review after approve
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > approve() > should clear pending review after approve
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-test-zQQAUj\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > approve() — HARD-GATE answers > approves non-HARD-GATE reviews without answers
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate-hard-gate.test.ts > PRDReviewGate HARD-GATE (T25) > approve() — HARD-GATE answers > approves non-HARD-GATE reviews without answers
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-hardgate-hnHcCz\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > modify() > should regenerate PRD with feedback
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > modify() > should regenerate PRD with feedback
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-test-yIOvsd\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > modify() > should regenerate PRD with feedback
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > modify() > should regenerate PRD with feedback
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-test-yIOvsd\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > modify() > should use original title when modifying
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > modify() > should use original title when modifying
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-test-pZblEw\.aza/todolist.json
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > modify() > should use original title when modifying
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > modify() > should use original title when modifying
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-test-pZblEw\.aza/todolist.json
+
+stderr | tests/unit/state-migration.test.ts > v14-P9.3 State migration + atomic writes > 1) v2 state (already current) loads without migration
+[StateManager] Checksum mismatch for STATE.yaml
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > cancel() > should return action=done
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > cancel() > should return action=done
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-test-aXtY8T\.aza/todolist.json
+
+stderr | tests/unit/mcp-event-bridge.test.ts > MCPEventBridge wrapping > Hard stop blocking > should throw when hard stop is active (pre-tool blocks execution)
+[MCPEventSimulator:pre-tool] Hard stop active — blocking tool call: aza_prd_generate
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > cancel() > should clear pending review after cancel
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > cancel() > should clear pending review after cancel
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-test-Ia60IN\.aza/todolist.json
+
+stderr | tests/unit/auto-loop-scheduler.test.ts > AutoLoopScheduler V18 > Tool Execution Reporting > should reject incorrect tool name
+[AutoLoopScheduler] Expected tool "aza_task_implement" but got "aza_quality_check" — ignoring
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > autoApproveOnTimeout() > should auto-approve when called
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > autoApproveOnTimeout() > should auto-approve when called
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-test-Bsvcea\.aza/todolist.json
+
+stderr | tests/integration/workspace-journal-auto.test.ts > v14-P9.1 Workspace journal auto-update > 3) autoAppendJournalEntry returns null and does not throw on bad azaDir
+autoAppendJournalEntry: ENOTDIR: not a directory, mkdir 'C:\Users\Administrator\AppData\Local\Temp\aza-journal-DMoXCM\blocker'
+
+[33m[39m[31mx[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[31mx[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[31mx[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[31mx[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[31mx[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[31mx[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[31mx[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[31mx[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[90mstdout[2m | tests/unit/client-templates.test.ts
+[22m[39m[ClientTemplates] Found 25 client template directories
+
+stderr | tests/unit/client-templates.test.ts > V17 Client Template Consistency > mcp.json checks > client "aider" has mcp.json with azaloop config
+[ClientTemplates] aider has no mcp.json — skipping
+
+stderr | tests/unit/client-templates.test.ts > V17 Client Template Consistency > mcp.json checks > client "claude-code" has mcp.json with azaloop config
+[ClientTemplates] claude-code has no mcp.json — skipping
+
+stderr | tests/unit/client-templates.test.ts > V17 Client Template Consistency > mcp.json checks > client "claude-desktop" has mcp.json with azaloop config
+[ClientTemplates] claude-desktop has no mcp.json — skipping
+
+stderr | tests/unit/client-templates.test.ts > V17 Client Template Consistency > mcp.json checks > client "cline" has mcp.json with azaloop config
+[ClientTemplates] cline has no mcp.json — skipping
+
+stderr | tests/unit/client-templates.test.ts > V17 Client Template Consistency > mcp.json checks > client "continue" has mcp.json with azaloop config
+[ClientTemplates] continue has no mcp.json — skipping
+
+stderr | tests/unit/client-templates.test.ts > V17 Client Template Consistency > mcp.json checks > client "github-copilot" has mcp.json with azaloop config
+[ClientTemplates] github-copilot has no mcp.json — skipping
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > autoApproveOnTimeout() > should clear pending review after auto-approve
+[AzaLoop][A1] PrdQualityGate: score=87, grade=B, passed=false, blockers=6
+
+stderr | tests/unit/prd-review-gate.test.ts > PRDReviewGate > autoApproveOnTimeout() > should clear pending review after auto-approve
+[AzaLoop][A2] todolist generated: C:\Users\Administrator\AppData\Local\Temp\azaloop-test-wQWYUn\.aza/todolist.json
+
+[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 16 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration.test.ts > AzaLoop 0.1.0 Integration > Task 5: L7 Loop Engine > LoopController: quality gate blocks advancement until condition set
+AssertionError: expected 'implement' to be 'refine' // Object.is equality
+
+Expected: "refine"
+Received: "implement"
+
+ ❯ tests/integration.test.ts:179:42
+    177|       expect(result.success).toBe(true);
+    178|       expect(result.next_action).toBeDefined();
+    179|       expect(result.next_action!.action).toBe('refine');
+       |                                          ^
+    180|       expect(result.next_action!.tool).toBe('aza_prd');
+    181|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/16]⎯
+
+ FAIL  tests/integration.test.ts > AzaLoop 0.1.0 Integration > Task 5: L7 Loop Engine > LoopController: quality gate loops per stage until condition met
+AssertionError: expected 'implement' to be 'refine' // Object.is equality
+
+Expected: "refine"
+Received: "implement"
+
+ ❯ tests/integration.test.ts:197:42
+    195|       // Stage 1: open → can't advance without prd_valid
+    196|       let result = await lc.next();
+    197|       expect(result.next_action!.action).toBe('refine');
+       |                                          ^
+    198|       expect(lc.stateMachine.getCurrentStage()).toBe('open');
+    199|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/16]⎯
+
+ FAIL  tests/integration.test.ts > AzaLoop 0.1.0 Integration > Task 7: Continuity & Resume > ResumeGenerator: write/read/clear
+AssertionError: expected undefined to be 'STORY-001' // Object.is equality
+
+- Expected:
+"STORY-001"
+
++ Received:
+undefined
+
+ ❯ tests/integration.test.ts:346:36
+    344|       const stage = sm.getStage();
+    345|       const resume = await rg.generate(sm, { current_story: 'STORY-001…
+    346|       expect(resume.current_story).toBe('STORY-001');
+       |                                    ^
+    347|       expect(resume.current_stage).toBe(stage);
+    348|       const read = await rg.read();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/16]⎯
+
+ FAIL  tests/integration.test.ts > AzaLoop 0.1.0 Integration > Full E2E: 输入→PRD→循环→续航 > E2E: Full pipeline from input to archive
+AssertionError: expected 0 to be greater than 0
+ ❯ tests/integration.test.ts:611:52
+    609|         }
+    610|       }
+    611|       expect(lc.stateMachine.getState().iteration).toBeGreaterThan(0);
+       |                                                    ^
+    612|
+    613|       // 5. Write resume & test continuity
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/16]⎯
+
+ FAIL  tests/integration/main-pipeline-integration.test.ts > Main-pipeline integration — Trae full-auto loop > bridge 1: PRDReviewGate.approve(source=openspec) writes the four-piece set
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/integration/main-pipeline-integration.test.ts:220:7
+    218|     expect(
+    219|       fs.existsSync(path.join(base, 'specs', 'core', 'spec.md')),
+    220|     ).toBe(true);
+       |       ^
+    221|
+    222|     // listChanges picks it up
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/16]⎯
+
+ FAIL  tests/integration/main-pipeline-integration.test.ts > Main-pipeline integration — Trae full-auto loop > bridge 4: next() drives 5 stages through StateMachine
+AssertionError: expected [ 'completed', 'in_progress', …(1) ] to include 'blocked'
+ ❯ tests/integration/main-pipeline-integration.test.ts:295:55
+    293|     const state = await restored.load();
+    294|     for (const stage of stages) {
+    295|       expect(['completed', 'in_progress', 'pending']).toContain(
+       |                                                       ^
+    296|         state.pipeline.stages[stage].status,
+    297|       );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/16]⎯
+
+ FAIL  tests/integration/main-pipeline-integration.test.ts > Main-pipeline integration — Trae full-auto loop > bridge 9: scaffoldChange → writeChangeFolder → archiveChange round-trip
+AssertionError: expected [ …(5) ] to have a length of 4 but got 5
+
+- Expected
++ Received
+
+- 4
++ 5
+
+ ❯ tests/integration/main-pipeline-integration.test.ts:377:28
+    375|         slug: 'round-trip',
+    376|       });
+    377|       expect(folder.files).toHaveLength(4);
+       |                            ^
+    378|
+    379|       const written = await writeChangeFolder(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/16]⎯
+
+ FAIL  tests/integration/openspec-executioncontract-bridge.test.ts > v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract > 1) scaffoldChange injects contract section when contract is provided
+AssertionError: expected '# Change: add-oauth-flow\n\n> Capabil…' to contain '## Execution Contract'
+
+- Expected
++ Received
+
+- ## Execution Contract
++ # Change: add-oauth-flow
++
++ > Capability: `auth` · Date: 2026-07-15 · Author: unknown
++ > Intent: Add OAuth flow
++
++ ## Why
++
++ Add OAuth flow
++
++ ## What Changes
++
++ - Add OAuth endpoint
++ - Update login UI
++
++ ## Impact
++
++ **Severity**: `medium`
++
++ This change affects the `auth` capability domain.
++
++ ## Non-Goals
++
++ _None specified._
++
++ ## Risks
++
++ _None specified._
++
++ ## Contract
++
++ Contract: `.aza/contract.md` (source of truth for intent lock / task batches — do not duplicate here)
++
+
+ ❯ tests/integration/openspec-executioncontract-bridge.test.ts:56:29
+     54|       },
+     55|     });
+     56|     expect(folder.proposal).toContain('## Execution Contract');
+       |                             ^
+     57|     expect(folder.proposal).toContain('`oauth-2026-07-13`');
+     58|     expect(folder.proposal).toContain('1.1');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/16]⎯
+
+ FAIL  tests/integration/openspec-executioncontract-bridge.test.ts > v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract > 3) writeChangeFolder writes proposal.md with contract section on disk
+AssertionError: expected '# Change: add-oauth-flow\n\n> Capabil…' to contain '## Execution Contract'
+
+- Expected
++ Received
+
+- ## Execution Contract
++ # Change: add-oauth-flow
++
++ > Capability: `auth` · Date: 2026-07-15 · Author: unknown
++ > Intent: Add OAuth flow
++
++ ## Why
++
++ Add OAuth flow
++
++ ## What Changes
++
++ - Add OAuth endpoint
++
++ ## Impact
++
++ **Severity**: `medium`
++
++ This change affects the `auth` capability domain.
++
++ ## Non-Goals
++
++ _None specified._
++
++ ## Risks
++
++ _None specified._
++
++ ## Contract
++
++ Contract: `.aza/contract.md` (source of truth for intent lock / task batches — do not duplicate here)
++
+
+ ❯ tests/integration/openspec-executioncontract-bridge.test.ts:88:21
+     86|     expect(fs.existsSync(proposalPath)).toBe(true);
+     87|     const content = fs.readFileSync(proposalPath, 'utf8');
+     88|     expect(content).toContain('## Execution Contract');
+       |                     ^
+     89|     expect(content).toContain('oauth-2026-07-13');
+     90|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/16]⎯
+
+ FAIL  tests/integration/openspec-executioncontract-bridge.test.ts > v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract > 7) contract section in proposal.md is at the top of the file
+AssertionError: expected -1 to be greater than or equal to 0
+ ❯ tests/integration/openspec-executioncontract-bridge.test.ts:185:25
+    183|     const contractIdx = content.indexOf('## Execution Contract');
+    184|     const whyIdx = content.indexOf('## Why');
+    185|     expect(contractIdx).toBeGreaterThanOrEqual(0);
+       |                         ^
+    186|     expect(whyIdx).toBeGreaterThan(contractIdx);
+    187|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/16]⎯
+
+ FAIL  tests/integration/tool-registry.test.ts > v0.2 converged tool-registry > exposes exactly 8 unified tools
+AssertionError: expected 9 to be 8 // Object.is equality
+
+- Expected
++ Received
+
+- 8
++ 9
+
+ ❯ tests/integration/tool-registry.test.ts:30:34
+     28| describe('v0.2 converged tool-registry', () => {
+     29|   it('exposes exactly 8 unified tools', () => {
+     30|     expect(TOOL_REGISTRY.length).toBe(8);
+       |                                  ^
+     31|     expect(getToolNames().sort()).toEqual([...UNIFIED].sort());
+     32|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/16]⎯
+
+ FAIL  tests/integration/tool-registry.test.ts > v0.2 converged tool-registry > formatted list has 8 entries
+AssertionError: expected 9 to be 8 // Object.is equality
+
+- Expected
++ Received
+
+- 8
++ 9
+
+ ❯ tests/integration/tool-registry.test.ts:55:50
+     53|
+     54|   it('formatted list has 8 entries', () => {
+     55|     expect(getFormattedToolDefinitions().length).toBe(8);
+       |                                                  ^
+     56|   });
+     57|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/16]⎯
+
+ FAIL  tests/integration/trae-auto-loop-full.test.ts > Trae E2E — full auto-loop pipeline > Full pipeline: review(HARD-GATE) → approve(openspec) → loop×5 → done
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/integration/trae-auto-loop-full.test.ts:310:7
+    308|     expect(
+    309|       fs.existsSync(path.join(projectRoot, 'openspec', 'specs', 'auth'…
+    310|     ).toBe(true);
+       |       ^
+    311|
+    312|     // 4. LoopController drives 5 stages under V16 single-stage schedu…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/16]⎯
+
+ FAIL  tests/unit/circuit-breaker.test.ts > CircuitBreaker 4 dimensions x 3 levels > No-progress dimension (no_progress) > should not trip when consecutive failures are below threshold
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/unit/circuit-breaker.test.ts:125:30
+    123|       const result = cb.check('phase');
+    124|       // 4 failures < 5 threshold, and errors are different (no stagna…
+    125|       expect(result.tripped).toBe(false);
+       |                              ^
+    126|     });
+    127|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/16]⎯
+
+ FAIL  tests/unit/circuit-breaker.test.ts > CircuitBreaker 4 dimensions x 3 levels > No-progress dimension (no_progress) > should trip when consecutive failures reach noProgressThreshold
+AssertionError: expected 'stagnation' to be 'no_progress' // Object.is equality
+
+Expected: "no_progress"
+Received: "stagnation"
+
+ ❯ tests/unit/circuit-breaker.test.ts:135:32
+    133|       const result = cb.check('phase');
+    134|       expect(result.tripped).toBe(true);
+    135|       expect(result.dimension).toBe('no_progress');
+       |                                ^
+    136|       expect(result.reason).toContain('No progress');
+    137|       expect(result.reason).toContain('5 consecutive failures');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/16]⎯
+
+ FAIL  tests/unit/circuit-breaker.test.ts > CircuitBreaker 4 dimensions x 3 levels > No-progress dimension (no_progress) > should reset consecutive failures on recordSuccess
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/unit/circuit-breaker.test.ts:159:30
+    157|
+    158|       const result = cb.check('phase');
+    159|       expect(result.tripped).toBe(false);
+       |                              ^
+    160|     });
+    161|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/16]⎯
+
+
+[2m Test Files [22m [1m[31m6 failed[39m[22m[2m | [22m[1m[32m47 passed[39m[22m[90m (53)[39m
+[2m      Tests [22m [1m[31m16 failed[39m[22m[2m | [22m[1m[32m712 passed[39m[22m[90m (728)[39m
+[2m   Start at [22m 07:58:37
+[2m   Duration [22m 10.03s[2m (transform 8.75s, setup 0ms, import 19.88s, tests 24.11s, environment 9ms)[22m
+

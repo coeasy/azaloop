@@ -49,10 +49,10 @@ export function registerDaemonCommand(program: Command): void {
 
       // Set up LoopController (mirrors `aza loop` wiring)
       const loader = new ConfigLoader(projectRoot);
-      const config = loader.getDefaultConfig();
+      const config = loader.loadSync();
       const lc = new LoopController({
         maxIterations: config.loop.max_iterations,
-        maxStageIterations: 5,
+        maxStageIterations: config.loop.max_stage_iterations,
         enableV12: true,
         azaDir,
         projectRoot,

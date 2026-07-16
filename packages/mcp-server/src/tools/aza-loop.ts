@@ -55,13 +55,20 @@ function buildController(projectRoot: string, client?: string): LoopController {
 
   const azaDir = path.join(root, '.aza');
   const loader = new ConfigLoader(root);
-  const config = loader.getDefaultConfig(); // non-async fallback
+  // R11: 真实读取 azaloop.yaml（loadSync 会解析文件；缺失则回退默认）
+  const config = loader.loadSync();
   const outerEnabled =
     (config as any).loop?.outer_enabled !== false &&
     process.env.AZA_OUTER_LOOP !== 'false';
+  // R10: maxStageIterations 配置化（9.8.4-2）。优先级：AZA_MAX_STAGE_ITERATIONS 环境变量 > azaloop.yaml loop.max_stage_iterations > 默认 20
+  const envMaxStage = Number(process.env.AZA_MAX_STAGE_ITERATIONS);
+  const maxStageIterations =
+    Number.isFinite(envMaxStage) && envMaxStage > 0
+      ? envMaxStage
+      : (config.loop.max_stage_iterations ?? 20);
   const lc = new LoopController({
     maxIterations: config.loop.max_iterations,
-    maxStageIterations: 5,
+    maxStageIterations,
     enableV12: true,
     enableOuterLoop: outerEnabled,
     azaDir,
@@ -77,21 +84,33 @@ function buildController(projectRoot: string, client?: string): LoopController {
       commit: createDefaultCommit(sm),
     });
   }
-  // Seed outer board from PRD stories when empty
-  try {
-    seedOuterBoardFromPrd(root, lc);
-  } catch {
+  // Seed outer board from PRD stories when empty (async fire-and-forget;
+  // loads disk state first so it never clobbers recovered progress — 9.8.4-1)
+  void seedOuterBoardFromPrd(root, lc).catch(() => {
     /* best-effort */
-  }
+  });
   controllerCache.set(key, lc);
   stateMtimeCache.set(key, mtime);
   return lc;
 }
 
-/** Populate outer.board from .aza/prd.json and/or openspec/changes when empty. */
-function seedOuterBoardFromPrd(root: string, lc: LoopController): void {
+/**
+ * Populate outer.board from .aza/prd.json and/or openspec/changes when empty.
+ *
+ * 修复 9.8.4-1 根因：必须先加载磁盘真实状态再写。否则新建控制器的
+ * StateManager 还持有默认 open/pending 状态，sm.update 会把跨会话恢复的
+ * 真实进度（如 build:in_progress/blocked）整体覆盖成默认态，导致无限
+ * escalated/秒回。改为先 await sm.load() 再合并，仅当 outer.board 为空时补充。
+ */
+async function seedOuterBoardFromPrd(root: string, lc: LoopController): Promise<void> {
   const sm = lc.stateManager;
   if (!sm) return;
+  // 关键：先加载磁盘真实状态，避免用默认态覆盖已恢复进度
+  try {
+    await sm.load();
+  } catch {
+    /* best-effort */
+  }
   const state = sm.getState?.() || {};
   const board = state.loops?.outer?.board;
   if (board?.pending?.length || board?.in_progress?.length) return;
@@ -155,10 +174,14 @@ function seedOuterBoardFromPrd(root: string, lc: LoopController): void {
 export function clearControllerCache(projectRoot?: string): void {
   if (projectRoot) {
     const root = normalizeRoot(projectRoot);
-    controllerCache.delete(root);
-    driverCache.delete(root);
-    schedulerCache.delete(root);
-    stateMtimeCache.delete(root);
+    // 清除所有与该 root 相关的键（含 client::root 形式）
+    for (const k of [controllerCache, driverCache, schedulerCache, stateMtimeCache]) {
+      for (const key of [...k.keys()]) {
+        if (key === root || key.endsWith(`::${root}`)) {
+          k.delete(key);
+        }
+      }
+    }
   } else {
     controllerCache.clear();
     driverCache.clear();
@@ -172,9 +195,9 @@ export function clearControllerCache(projectRoot?: string): void {
  * Sets guard condition, records DP-0/DP-1, and writes an aza_prd_approve audit marker
  * so DecisionPointRegistry.canEnterStage('design') passes T18.
  */
-export async function markPrdApproved(projectRoot?: string): Promise<void> {
+export async function markPrdApproved(projectRoot?: string, client?: string): Promise<void> {
   const root = normalizeRoot(projectRoot ?? process.cwd());
-  const lc = buildController(root);
+  const lc = buildController(root, client);
   lc.setCondition('prd_valid', true);
   // Fresh story: clear stage-completion markers so makers await real work again.
   try {
@@ -473,7 +496,7 @@ export async function handleAutoLoop(
     process.env.AZA_MODE === 'oneshot' ||
     process.env.PLANNING_DISABLED === 'true';
   if (oneshot && (action === 'full' || action === 'auto')) {
-    const driver = buildDriver(root);
+    const driver = buildDriver(root, client);
     const step = await driver.step();
     if (step.awaitingAction) {
       return {
@@ -514,21 +537,34 @@ export async function handleAutoLoop(
     };
   }
 
-  const driver = buildDriver(root);
+  const driver = buildDriver(root, client);
 
   // ── V16: Background scheduler actions ──
-  const scheduler = schedulerCache.get(root) || buildScheduler(root);
+  const scheduler = schedulerCache.get(root) || buildScheduler(root, client);
 
   switch (action ?? 'step') {
     case 'status': {
-      // Include scheduler status if available
+      // R10 / 跨会话恢复：status 必须反映磁盘 STATE.yaml 的真实阶段，
+      // 而非内存默认 'open'（清缓存/崩溃重建后尤其容易失真）。
+      // 先按磁盘重建内存状态，再报告真实 stage（修复 9.8.4-1）。
+      await driver.syncStageFromDisk();
+      const lcState = driver.getLoopController().stateMachine.getState();
+      const realStage: string = lcState.current_stage || driver.getCurrentStage();
+      const anyActive = Object.values(lcState.stages as Record<string, any>).some(
+        (s: any) => s?.status === 'in_progress' || s?.status === 'blocked',
+      );
+      // 内存 driver 状态为 idle 但磁盘存在活跃阶段 → 标记为 recovered，避免误导客户端以为需从 open 重来
+      const effectiveStatus =
+        driver.getStatus() === 'idle' && anyActive ? 'recovered' : driver.getStatus();
       const schedulerStatus = scheduler.getStatus();
       return {
         success: true,
         data: {
-          status: driver.getStatus(),
-          iteration: driver.getIteration(),
-          current_stage: driver.getCurrentStage(),
+          status: effectiveStatus,
+          stage: realStage,
+          iteration: lcState.iteration,
+          progress: lcState.progress,
+          current_stage: realStage,
           scheduler: {
             running: schedulerStatus.running,
             paused: schedulerStatus.paused,
@@ -537,9 +573,9 @@ export async function handleAutoLoop(
           },
         },
         metadata: {
-          iteration: driver.getIteration(),
-          progress: driver.getLoopController().stateMachine.getProgress(),
-          stage: driver.getCurrentStage(),
+          iteration: lcState.iteration,
+          progress: lcState.progress,
+          stage: realStage,
         },
       };
     }
@@ -590,23 +626,56 @@ export async function handleAutoLoop(
           };
         }
         if (last.done) {
+          // 区分真正的完成（action=done）与失败终止（stop / escalate）。
+          // 失败升级（如 3-Strike、DP gate 阻塞）绝不能被伪装成 success/completed，
+          // 否则客户端会误以为任务成功而 ship 未完成的产物。
+          const terminalAction = last.nextAction?.action;
+          const isRealCompletion = terminalAction === 'done';
+          const isEscalation = terminalAction === 'escalate';
+          const isStop = terminalAction === 'stop';
+          if (isRealCompletion) {
+            return {
+              success: true,
+              data: {
+                status: 'completed',
+                done: true,
+                nextAction: last.nextAction,
+                iteration: last.iteration,
+                stage: last.stage,
+              },
+              next_action: last.nextAction ?? {
+                tool: 'aza_finish',
+                action: 'ship',
+                reason: 'Loop completed — ship delivery',
+              },
+              metadata: {
+                iteration: last.iteration,
+                progress: '100%',
+                stage: last.stage,
+              },
+            };
+          }
+          // escalate / stop：明确失败终止，done=false，绝不 ship
           return {
-            success: true,
+            success: false,
             data: {
-              status: 'completed',
-              done: true,
+              status: isEscalation ? 'escalated' : 'stopped',
+              done: false,
+              reason:
+                last.nextAction?.reason ??
+                (isEscalation ? 'Loop escalated (e.g. 3-Strike) — not completed' : 'Loop stopped before completion'),
               nextAction: last.nextAction,
               iteration: last.iteration,
               stage: last.stage,
             },
-            next_action: last.nextAction ?? {
-              tool: 'aza_finish',
-              action: 'ship',
-              reason: 'Loop completed — ship delivery',
+            next_action: {
+              tool: 'aza_loop',
+              action: 'reset',
+              reason: 'Loop did not complete cleanly — inspect .aza and reset/retry',
             },
             metadata: {
               iteration: last.iteration,
-              progress: '100%',
+              progress: driver.getLoopController().stateMachine.getProgress(),
               stage: last.stage,
             },
           };

@@ -38,6 +38,33 @@ export type {
   DimensionScore,
 } from './L1_spec/prd-checker';
 
+// R10 第10轮 (D9)：PRD LLM prompts 新增导出
+export {
+  PRD_DRAFT_PROMPT,
+  PRD_CEO_REVIEW_PROMPT,
+  PRD_QA_REVIEW_PROMPT,
+  PRD_ENG_REVIEW_PROMPT,
+  PRD_DESIGN_REVIEW_PROMPT,
+  PRD_REFINE_PROMPT,
+  PRD_REFINE_SELF_CHECK_PROMPT,
+  readCompetitiveResearchFile,
+  reconcileFindings,
+  detectDoubtTheater,
+  ANTI_RATIONALIZATION_TABLE,
+  ADVERSARIAL_PRINCIPLE,
+  RECONCILE_PRIORITIES,
+} from './L1_spec/prd-llm-prompts';
+export type {
+  CompetitiveContext,
+  ReviewFinding,
+  MultiRoleReviewResponse,
+  ReconcilePriority,
+} from './L1_spec/prd-llm-prompts';
+
+// R10 第10轮 (D9)：PRD quality scorer 导出
+export { PrdQualityScorer } from './L1_spec/prd-quality-scorer';
+export type { PrdQualityScore, QualityIssue } from './L1_spec/prd-quality-scorer';
+
 // L1 - Spec / PRD Review Gate (C5)
 export { PRDReviewGate } from './L1_spec/prd-review-gate';
 export type { PRDReviewResult, ApprovalResult } from './L1_spec/prd-review-gate';
@@ -148,7 +175,7 @@ export type { RedFlag as BrainstormingRedFlag } from './L1_spec/brainstorming-re
 // L2 - Memory
 export { WorkingMemory } from './L2_memory/working-memory';
 export { ProjectMemory } from './L2_memory/project-memory';
-export type { EpisodicMemory } from './L2_memory/project-memory';
+export type { EpisodicMemory, ProjectMemoryOptions } from './L2_memory/project-memory';
 export { LongTermMemory } from './L2_memory/long-term-memory';
 export type { SemanticMemory } from './L2_memory/long-term-memory';
 export { SessionCatchup } from './L2_memory/session-catchup';
@@ -157,6 +184,9 @@ export { MemoryCompressor } from './L2_memory/compression';
 // R1-P0: 导出统一文件落盘器
 export { FilePersistor } from './L2_memory/file-persistor';
 export type { PersistResult, PersistOptions } from './L2_memory/file-persistor';
+// R10 第5轮 (D13)：导出 LLM 响应缓存
+export { PromptResponseCache } from './L2_memory/prompt-cache';
+export type { CacheEntry, PromptCacheOptions } from './L2_memory/prompt-cache';
 export { ContextOrchestrator } from './L2_memory/context-orchestrator';
 export type {
   ContextEntry,
@@ -686,7 +716,7 @@ export {
 export type { LoopAuditGateContext, LoopAuditGateResult } from './quality/gates/gate6-loop-audit';
 
 // Continuity
-export { ResumeGenerator } from './continuity/resume-generator';
+export { ResumeGenerator, AZALOOP_ENGINE_VERSION } from './continuity/resume-generator';
 export type {
   ResumeData,
   RebootQuestion,
@@ -694,7 +724,16 @@ export type {
   LedgerEntry,
   LedgerEntryType,
   LedgerSummary,
+  VersionCompatibility,
 } from './continuity/resume-generator';
+// R10 第7轮 (D7)：迁移注册表 — 暴露可用迁移清单供外部查询
+export {
+  MIGRATIONS,
+  getLatestSchemaVersion,
+  hasMigrationPath,
+  getMigrationPath,
+} from './state/migrations/registry';
+export type { MigrationDescriptor } from './state/migrations/registry';
 export { MCPContinueService } from './continuity/mcp-continue';
 export type { MCPContinueResult } from './continuity/mcp-continue';
 export { CatchupProtocol } from './continuity/catchup-protocol';
@@ -705,8 +744,8 @@ export { MCPEventSimulator } from './continuity/mcp-event-simulator';
 export type { EventSimulationResult } from './continuity/mcp-event-simulator';
 
 // L0 - Platform
-export { detectClient, getClient, getAllClients } from './L0_platform/client-detection';
-export type { ClientInfo } from './L0_platform/client-detection';
+export { detectClient, getClient, getAllClients, detectClientSwitch } from './L0_platform/client-detection';
+export type { ClientInfo, ClientSwitchResult } from './L0_platform/client-detection';
 export { TemplateGenerator } from './L0_platform/template-generator';
 export { WorkspaceManager } from './L0_platform/workspace-manager';
 export type { WorkspaceInfo } from './L0_platform/workspace-manager';

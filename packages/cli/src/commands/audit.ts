@@ -6,11 +6,11 @@ export async function auditCommand(dir?: string): Promise<void> {
   const projectRoot = path.dirname(azaDir);
 
   const loader = new ConfigLoader(projectRoot);
-  const config = loader.getDefaultConfig();
+  const config = loader.loadSync();
 
   const lc = new LoopController({
     maxIterations: config.loop.max_iterations,
-    maxStageIterations: 5,
+    maxStageIterations: config.loop.max_stage_iterations,
     enableV12: true,
     azaDir,
     projectRoot,

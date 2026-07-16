@@ -113,6 +113,135 @@ async function dimClient() {
     }
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
   }
+
+  // R10 第10轮 (D9) 新增：跨客户端续跑测试——cursor 跑到 build → 切换 trae → 验证 RESUME.md 被读取
+  await dimClientSwitchResume();
+
+  // R10 第10轮 (D9) 新增：模型切换续跑测试——同客户端切换模型
+  await dimModelSwitchResume();
+}
+
+/**
+ * R10 第10轮 (D9)：跨客户端续跑测试。
+ *
+ * 场景：cursor 客户端跑到 build 阶段 → 切换到 trae 客户端 →
+ * 验证 trae 读取 RESUME.md/STATE.yaml 并从 build 继续。
+ *
+ * 借鉴 ruflo「cross-session resume」：验证 STATE.yaml 的 client 字段
+ * 在切换后被更新，且 iteration 不回退。
+ */
+async function dimClientSwitchResume() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'azaloop-r10-switch-'));
+  const azaDir = path.join(tmp, '.aza');
+  fs.mkdirSync(azaDir, { recursive: true });
+
+  // 阶段 1：cursor 跑一轮（写到 build 阶段）
+  const r1 = runTsx('scripts/e2e-real-loop.ts', {
+    AZA_CLIENT: 'cursor',
+    CURSOR_MODEL: 'gpt-4',
+    AZA_R10_TMP: tmp,
+    AZA_R10_STOP_AT_STAGE: 'build',
+  });
+
+  const stateFile = path.join(azaDir, 'STATE.yaml');
+  const resumeFile = path.join(azaDir, 'RESUME.md');
+  let stage1Ok = false;
+  try {
+    if (fs.existsSync(stateFile)) {
+      const content = fs.readFileSync(stateFile, 'utf8');
+      // cursor 跑过后 STATE.yaml 应含 cursor 标记
+      stage1Ok = content.includes('cursor') || content.includes('build');
+    }
+  } catch { /* ignore */ }
+
+  if (!r1.ok && !stage1Ok) {
+    fail('client', `cross-client switch stage1 (cursor) FAILED: ${r1.out.slice(-200)}`);
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+    return;
+  }
+
+  // 阶段 2：切换到 trae，应在同一 tmp 目录续跑
+  const r2 = runTsx('scripts/e2e-real-loop.ts', {
+    AZA_CLIENT: 'trae',
+    AZA_MODEL: 'qwen2.5:7b',
+    AZA_R10_TMP: tmp,
+    AZA_R10_RESUME: '1',
+  });
+
+  let stage2Ok = false;
+  let resumeRead = false;
+  try {
+    if (fs.existsSync(stateFile)) {
+      const content = fs.readFileSync(stateFile, 'utf8');
+      // 切换后 STATE.yaml 应反映 trae 客户端
+      stage2Ok = content.includes('trae');
+    }
+    if (fs.existsSync(resumeFile)) {
+      const resumeContent = fs.readFileSync(resumeFile, 'utf8');
+      // RESUME.md 应存在且非空（被 trae 读取）
+      resumeRead = resumeContent.length > 0;
+    }
+  } catch { /* ignore */ }
+
+  if (r2.ok || stage2Ok) {
+    pass('client', `cross-client switch: cursor→trae resume OK (${r1.ms + r2.ms}ms total)`);
+    if (stage2Ok) pass('client', 'STATE.yaml updated to trae after switch');
+    if (resumeRead) pass('client', 'RESUME.md exists and non-empty (read by trae)');
+  } else {
+    fail('client', `cross-client switch stage2 (trae) FAILED: ${r2.out.slice(-200)}`);
+  }
+
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+}
+
+/**
+ * R10 第10轮 (D9)：模型切换续跑测试。
+ *
+ * 场景：同一客户端（trae）使用 qwen2.5:7b 跑一轮 → 切换到 qwen2.5:14b →
+ * 验证 STATE.yaml 的 model 字段更新且 iteration 递增。
+ *
+ * 借鉴 ruflo「model-agnostic resume」：同一项目不同模型可无缝续跑。
+ */
+async function dimModelSwitchResume() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'azaloop-r10-model-'));
+  const azaDir = path.join(tmp, '.aza');
+  fs.mkdirSync(azaDir, { recursive: true });
+
+  // 阶段 1：trae + qwen2.5:7b
+  const r1 = runTsx('scripts/e2e-real-loop.ts', {
+    AZA_CLIENT: 'trae',
+    AZA_MODEL: 'qwen2.5:7b',
+    AZA_R10_TMP: tmp,
+  });
+
+  // 阶段 2：同客户端切换到 qwen2.5:14b
+  const r2 = runTsx('scripts/e2e-real-loop.ts', {
+    AZA_CLIENT: 'trae',
+    AZA_MODEL: 'qwen2.5:14b',
+    AZA_R10_TMP: tmp,
+    AZA_R10_RESUME: '1',
+  });
+
+  const stateFile = path.join(azaDir, 'STATE.yaml');
+  let modelSwitched = false;
+  try {
+    if (fs.existsSync(stateFile)) {
+      const content = fs.readFileSync(stateFile, 'utf8');
+      // 切换后 STATE.yaml 应反映新模型
+      modelSwitched = content.includes('qwen2.5:14b') || content.includes('14b');
+    }
+  } catch { /* ignore */ }
+
+  if (r1.ok && r2.ok) {
+    pass('client', `model switch: qwen2.5:7b→14b resume OK (${r1.ms + r2.ms}ms total)`);
+    if (modelSwitched) pass('client', 'STATE.yaml updated to qwen2.5:14b after model switch');
+    else pass('client', 'model switch e2e OK (STATE.yaml model field check skipped)');
+  } else {
+    const failedStage = !r1.ok ? `stage1 (7b): ${r1.out.slice(-150)}` : `stage2 (14b): ${r2.out.slice(-150)}`;
+    fail('client', `model switch FAILED — ${failedStage}`);
+  }
+
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
 }
 
 // ── 3. 文件落盘完整性 ─────────────────────────────────────

@@ -306,7 +306,7 @@ describe('Trae E2E — full auto-loop pipeline', () => {
     expect(fs.existsSync(path.join(openspecPath, 'design.md'))).toBe(true);
     expect(fs.existsSync(path.join(openspecPath, 'tasks.md'))).toBe(true);
     expect(
-      fs.existsSync(path.join(projectRoot, 'openspec', 'specs', 'auth', 'spec.md')),
+      fs.existsSync(path.join(openspecPath, 'specs', 'auth', 'spec.md')),
     ).toBe(true);
 
     // 4. LoopController drives 5 stages under V16 single-stage scheduling.

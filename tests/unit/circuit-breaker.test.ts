@@ -115,19 +115,20 @@ describe('CircuitBreaker 4 dimensions x 3 levels', () => {
 
   describe('No-progress dimension (no_progress)', () => {
     it('should not trip when consecutive failures are below threshold', () => {
-      cb.recordFailure('phase', 'error 1');
-      cb.recordFailure('phase', 'error 2');
-      cb.recordFailure('phase', 'error 3');
-      cb.recordFailure('phase', 'error 4');
+      cb.recordFailure('phase', 'connection timeout to db');
+      cb.recordFailure('phase', 'unauthorized 401 token');
+      cb.recordFailure('phase', 'yaml parse failure');
+      cb.recordFailure('phase', 'disk quota exceeded');
 
       const result = cb.check('phase');
-      // 4 failures < 5 threshold, and errors are different (no stagnation)
+      // 4 failures < 5 threshold, and errors are semantically different (no stagnation)
       expect(result.tripped).toBe(false);
     });
 
     it('should trip when consecutive failures reach noProgressThreshold', () => {
-      for (let i = 0; i < 5; i++) {
-        cb.recordFailure('phase', `unique error ${i}`);
+      const msgs = ['conn reset by peer', 'auth denied', 'json decode error', 'null pointer', 'file not found'];
+      for (const msg of msgs) {
+        cb.recordFailure('phase', msg);
       }
 
       const result = cb.check('phase');
@@ -149,11 +150,11 @@ describe('CircuitBreaker 4 dimensions x 3 levels', () => {
     });
 
     it('should reset consecutive failures on recordSuccess', () => {
-      cb.recordFailure('phase', 'error 1');
-      cb.recordFailure('phase', 'error 2');
+      cb.recordFailure('phase', 'first transient error');
+      cb.recordFailure('phase', 'second transient error');
       cb.recordSuccess('phase'); // resets consecutive failures
-      cb.recordFailure('phase', 'error 3');
-      cb.recordFailure('phase', 'error 4');
+      cb.recordFailure('phase', 'third transient error');
+      cb.recordFailure('phase', 'fourth transient error');
 
       const result = cb.check('phase');
       expect(result.tripped).toBe(false);

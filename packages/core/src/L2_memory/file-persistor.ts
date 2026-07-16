@@ -152,6 +152,48 @@ export class FilePersistor {
   }
 
   /**
+   * R10 第3轮 (D3)：便捷检查点方法——持久化指定产物 + 验证全部产物完整性。
+   *
+   * 供 LoopController.syncStateToFile() 在每轮 checkpoint 调用。
+   * - 若传入 prd/contract/state/resume，通过 persistAll 重新原子写入（带 checksum）
+   * - 若传入 loopMd，写入 loop.md（loop 摘要，新增产物）
+   * - 最后调用 verifyAll() 验证 .aza/ 下所有关键产物
+   *
+   * 返回 { persistResults, verification }——调用方可据此判断是否健康。
+   */
+  async persistCheckpoint(artifacts?: {
+    prd?: unknown;
+    contract?: string;
+    state?: unknown;
+    resume?: string;
+    loopMd?: string;
+  }): Promise<{
+    persistResults: Record<string, PersistResult>;
+    verification: {
+      healthy: boolean;
+      artifacts: Array<{ name: string; filePath: string; valid: boolean; error?: string }>;
+    };
+  }> {
+    const persistResults: Record<string, PersistResult> = {};
+    if (artifacts) {
+      const { loopMd, ...rest } = artifacts;
+      const hasRest =
+        rest.prd !== undefined ||
+        rest.contract !== undefined ||
+        rest.state !== undefined ||
+        rest.resume !== undefined;
+      if (hasRest) {
+        Object.assign(persistResults, await this.persistAll(rest));
+      }
+      if (loopMd !== undefined) {
+        persistResults.loop_md = await this.persistText('loop.md', loopMd, 'loop_md');
+      }
+    }
+    const verification = await this.verifyAll();
+    return { persistResults, verification };
+  }
+
+  /**
    * 持久化 PRD 的 Markdown 渲染（prd.md）——与 persistPRD(prd.json) 配套。
    */
   async persistPrdMarkdown(markdown: string): Promise<PersistResult> {
@@ -263,7 +305,23 @@ export class FilePersistor {
       }
 
       // 重命名为目标文件
-      await fs.rename(tempPath, filePath);
+      try {
+        await fs.rename(tempPath, filePath);
+      } catch (renameErr: any) {
+        // 跨平台健壮性：Windows 上目标文件被占用（防病毒/索引）时 rename 会
+        // EPERM/EBUSY。先尝试删旧文件再 rename，仍失败则直接覆盖写，
+        // 保证产物最终落盘，绝不因一次写失败丢失数据。
+        if (renameErr?.code === 'EPERM' || renameErr?.code === 'EBUSY') {
+          try {
+            await fs.unlink(filePath).catch(() => {});
+            await fs.rename(tempPath, filePath);
+          } catch {
+            await fs.writeFile(filePath, content, 'utf8').catch(() => {});
+          }
+        } else {
+          throw renameErr;
+        }
+      }
     } else {
       // 直接写入
       await fs.writeFile(filePath, content, 'utf8');
@@ -359,7 +417,7 @@ export class FilePersistor {
     healthy: boolean;
     artifacts: Array<{ name: string; filePath: string; valid: boolean; error?: string }>;
   }> {
-    const files = ['prd.json', 'contract.md', 'STATE.yaml', 'RESUME.md', 'HEARTBEAT.yaml', 'competitive-research.md', 'prd.md'];
+    const files = ['prd.json', 'contract.md', 'STATE.yaml', 'RESUME.md', 'HEARTBEAT.yaml', 'competitive-research.md', 'prd.md', 'loop.md'];
     const artifacts: Array<{ name: string; filePath: string; valid: boolean; error?: string }> = [];
     for (const name of files) {
       const filePath = path.join(this.azaDir, name);

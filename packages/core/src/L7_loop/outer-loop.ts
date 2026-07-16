@@ -22,6 +22,15 @@ export interface Story {
   started: boolean;
   /** IDs of stories that must complete before this one (DAG dependencies). */
   dependencies?: string[];
+  /**
+   * R10 第9轮 (D15)：并行分组标签——借鉴 ralphy --parallel。
+   *
+   * PRD 可声明 parallel_groups: [[story1, story2], [story3]]，
+   * 同一 parallel_group 的 stories 在同一波次并行执行，
+   * 不同 group 顺序执行。比 dependencies 更声明式（适合非 DAG 场景）。
+   * 若同时设置 dependencies 和 parallel_group，dependencies 优先。
+   */
+  parallel_group?: string;
 }
 
 /**
@@ -601,6 +610,176 @@ export class OuterLoop {
     }
 
     // Reached max cycles
+    return {
+      success: false,
+      done: false,
+      total_cycles: this.totalCycles,
+      cycle_history: this.cycleHistory,
+      escalated: true,
+      escalation_reason: `Reached maximum cycles (${this.options.maxCycles})`,
+      work_summary: workParts.join('\n'),
+      suggestions,
+      breaker_status: this.circuitBreaker && this.options.enableCircuitBreaker
+        ? this.circuitBreaker.check('outer')
+        : null,
+    };
+  }
+
+  /**
+   * R10 第9轮 (D15)：基于 parallel_group 的并行批次执行——借鉴 ralphy --parallel。
+   *
+   * 与 {@link runParallel} 的差异：
+   * - `runParallel` 基于 DAG dependencies 自动识别可并行 stories
+   * - `runParallelGroups` 基于 PRD 声明的 `parallel_group` 字段显式分组
+   *
+   * 语义：
+   * - 同一 parallel_group 的 stories 在同一波次并行执行（Promise.all）
+   * - 不同 group 顺序执行（group A 完成 → group B 开始）
+   * - 无 parallel_group 的 stories 单独成组、按 priority 顺序执行
+   *
+   * 适用场景：PRD 作者明确知道哪些 stories 可以并行（如多个独立模块的构建），
+   * 不想手算 dependencies，直接声明分组更直观。
+   *
+   * @param storyProvider     返回当前 backlog（stories 需带 parallel_group 字段）
+   * @param stateReader       读取 STATE 文件
+   * @param handlerProvider   提供 stage handlers
+   * @param humanGate         Human Gate 检查
+   * @param commit            Commit/PR 回调
+   */
+  async runParallelGroups(
+    storyProvider: StoryProvider,
+    stateReader: StateReader,
+    handlerProvider: StageHandlerProvider,
+    humanGate: HumanGateFn,
+    commit: CommitFn,
+  ): Promise<OuterLoopResult> {
+    this.cycleHistory = [];
+    this.totalCycles = 0;
+    const suggestions: string[] = [];
+    const workParts: string[] = [];
+
+    const stories = await storyProvider();
+    if (stories.length === 0) {
+      return this.complete(workParts, suggestions);
+    }
+
+    // 按 parallel_group 分组（undefined 单独成组）
+    const groupMap = new Map<string, Story[]>();
+    for (const s of stories) {
+      const g = s.parallel_group ?? '__default__';
+      const arr = groupMap.get(g) ?? [];
+      arr.push(s);
+      groupMap.set(g, arr);
+    }
+    // 组内按 priority 降序（保证高优先级先调度）
+    for (const arr of groupMap.values()) {
+      arr.sort((a, b) => b.priority - a.priority);
+    }
+    // 组顺序：default 组最后（确保显式声明的组先跑）
+    const groupNames = [...groupMap.keys()].sort((a, b) => {
+      if (a === '__default__') return 1;
+      if (b === '__default__') return -1;
+      return a.localeCompare(b);
+    });
+
+    for (let wave = 1; wave <= this.options.maxCycles; wave++) {
+      this.totalCycles = wave;
+      const groupName = groupNames[wave - 1];
+      if (!groupName) {
+        // 所有 group 已处理完
+        return this.complete(workParts, suggestions);
+      }
+      const group = groupMap.get(groupName) ?? [];
+      if (group.length === 0) continue;
+
+      const waveStart = new Date().toISOString();
+      // Cap parallelism within the group
+      const batch = group.slice(0, this.options.maxParallel);
+
+      // Dispatch batch in parallel
+      const batchResults = await Promise.all(
+        batch.map(async (story) => {
+          const innerResult = await this.innerLoop.run(story.id, handlerProvider);
+          return { story, innerResult };
+        }),
+      );
+
+      let anyEscalated = false;
+      let escalationReason: string | undefined;
+
+      for (const { story, innerResult } of batchResults) {
+        suggestions.push(...innerResult.suggestions);
+
+        let humanGatePassed = false;
+        let committed = false;
+        let escalated = false;
+
+        if (innerResult.success) {
+          if (this.options.requireHumanGate) {
+            humanGatePassed = await humanGate(story.id, innerResult);
+          } else {
+            humanGatePassed = true;
+          }
+          if (humanGatePassed) {
+            const commitResult = await commit(story.id, innerResult);
+            committed = commitResult.committed;
+            if (committed) {
+              workParts.push(
+                `Story "${story.id}" (group=${groupName}): committed${commitResult.pr_url ? ` (PR: ${commitResult.pr_url})` : ''}`,
+              );
+            }
+          } else {
+            escalated = true;
+            escalationReason = `Human Gate rejected story "${story.id}" in group "${groupName}"`;
+          }
+        } else {
+          escalated = true;
+          escalationReason = innerResult.escalation_reason || `Inner loop failed for story "${story.id}"`;
+        }
+
+        this.cycleHistory.push({
+          cycle: wave,
+          phase: escalated ? 'gate' : 'commit',
+          started_at: waveStart,
+          completed_at: new Date().toISOString(),
+          story_id: story.id,
+          inner_result: innerResult,
+          human_gate_reached: humanGatePassed,
+          committed,
+          escalated,
+          escalation_reason: escalated ? escalationReason : undefined,
+          tokens_used: innerResult.total_iterations * 1000,
+        });
+
+        if (escalated) anyEscalated = true;
+
+        if (this.circuitBreaker && this.options.enableCircuitBreaker) {
+          if (committed) {
+            this.circuitBreaker.recordProgress('outer');
+          } else {
+            this.circuitBreaker.recordFailure('outer', escalationReason || `Wave ${wave} did not commit`);
+          }
+        }
+      }
+
+      if (this.circuitBreaker && this.options.enableCircuitBreaker) {
+        const breakerResult = this.circuitBreaker.check('outer');
+        if (breakerResult.tripped) {
+          return this.escalate(
+            `Circuit breaker tripped: ${breakerResult.reason}`,
+            workParts, suggestions, breakerResult,
+          );
+        }
+      }
+
+      if (anyEscalated) {
+        return this.escalate(
+          escalationReason || 'Unknown escalation',
+          workParts, suggestions, null,
+        );
+      }
+    }
+
     return {
       success: false,
       done: false,

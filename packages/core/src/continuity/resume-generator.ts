@@ -2,6 +2,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { StateManager } from '../state/state-manager';
 import type { EpisodicMemory } from '../L2_memory/project-memory';
+// R10 第7轮 (D7)：版本兼容性校验依赖迁移注册表
+import { hasMigrationPath, getLatestSchemaVersion, getMigrationPath } from '../state/migrations/registry';
 
 export interface ResumeData {
   current_stage: string;
@@ -24,6 +26,31 @@ export interface ResumeData {
 
 /** 引擎代际标记（与 package.json 解耦，专用于跨客户端恢复校验）。 */
 export const AZALOOP_ENGINE_VERSION = '0.1.0';
+
+/**
+ * R10 第7轮 (D7)：版本兼容性校验结果。
+ *
+ * `validateVersion()` 返回此结构，让调用方知道：
+ * - 是否兼容当前引擎版本
+ * - 应该 `continue` / `migrate` / `reset`
+ * - 是否存在完整的 schema 迁移路径（供 state-manager 兜底参考）
+ */
+export interface VersionCompatibility {
+  /** 是否与当前引擎版本兼容 */
+  compatible: boolean;
+  /** 人类可读的兼容性原因（用于日志/审计） */
+  reason: string;
+  /** 建议的后续动作 */
+  action: 'continue' | 'migrate' | 'reset';
+  /** RESUME.md 中记录的引擎版本 */
+  resumeVersion: string;
+  /** 当前引擎版本 */
+  engineVersion: string;
+  /** 可选：从 schema v1 到最新版本的迁移步骤清单 */
+  schemaMigrationPath?: readonly { from: number; to: number; description: string }[];
+  /** 可选：迁移路径是否完整（false 表示迁移链有断裂，调用方需 reset） */
+  schemaMigrationPathAvailable?: boolean;
+}
 
 /**
  * A single question in the 5-Question Reboot Test.
@@ -220,6 +247,154 @@ export class ResumeGenerator {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * R10 第7轮 (D7)：版本兼容性校验。
+   *
+   * 原先 `validateAndResume()` 把版本检查内嵌为简单的 major 版本对比，
+   * 缺少对次要版本/补丁版本的处理逻辑，也无法回答「能否自动迁移」。
+   *
+   * 本方法集中决策：
+   * - 主版本不同 → 不兼容，必须 `reset` 重新开始
+   * - 主版本相同 + 次要/补丁版本不同 → 兼容，可 `migrate` 自动迁移
+   * - 完全相同 → 兼容，`continue` 直接续跑
+   *
+   * 注意：engine_version 与 schema_version 是两个独立维度：
+   *   - engine_version: 跨客户端/跨会话引擎代际标记（写在 RESUME.md）
+   *   - schema_version: STATE.yaml 结构版本（由 state-manager.migrations 处理）
+   * 本方法仅校验 engine_version 兼容性；STATE.yaml 的 schema_version 迁移
+   * 由 StateManager.loadWithMigration() 在 load() 时独立处理，
+   * 但本方法会返回 schema 迁移路径信息供调用方参考。
+   *
+   * @returns 兼容性结果，调用方根据 `action` 决定后续行为
+   */
+  validateVersion(resume: ResumeData): VersionCompatibility {
+    const resumeVer = resume.engine_version ?? '0.0.0';
+    const engineVer = AZALOOP_ENGINE_VERSION;
+
+    const [resumeMajor, resumeMinor = '0', resumePatch = '0'] = resumeVer.split('.');
+    const [engineMajor, engineMinor = '0', enginePatch = '0'] = engineVer.split('.');
+
+    // 缺少版本信息 → 视为不兼容，避免误恢复老版本状态
+    if (!resume.engine_version) {
+      return {
+        compatible: false,
+        reason: `resume.engine_version missing (resume=${resumeVer}, current=${engineVer})`,
+        action: 'reset',
+        resumeVersion: resumeVer,
+        engineVersion: engineVer,
+      };
+    }
+
+    // 主版本不同 → 不兼容，无法安全迁移
+    if (resumeMajor !== engineMajor) {
+      return {
+        compatible: false,
+        reason: `major version mismatch: resume=${resumeMajor}.x vs current=${engineMajor}.x`,
+        action: 'reset',
+        resumeVersion: resumeVer,
+        engineVersion: engineVer,
+      };
+    }
+
+    // 主版本相同 → 兼容，可恢复。
+    // 同时附带 schema 迁移路径信息：调用方据此判断是否需要触发
+    // state-manager.loadWithMigration()（resume 文件本身不带 schema_version，
+    // 但调用方在恢复 STATE.yaml 时应始终调用 loadWithMigration 兜底）。
+    const schemaMigrationPath = getMigrationPath(1, getLatestSchemaVersion());
+    const schemaMigrationPathAvailable = hasMigrationPath(1, getLatestSchemaVersion());
+
+    if (resumeMinor !== engineMinor || resumePatch !== enginePatch) {
+      return {
+        compatible: true,
+        reason: `minor/patch version mismatch but compatible: resume=${resumeVer} vs current=${engineVer}`,
+        action: 'migrate',
+        resumeVersion: resumeVer,
+        engineVersion: engineVer,
+        schemaMigrationPath,
+        schemaMigrationPathAvailable,
+      };
+    }
+
+    return {
+      compatible: true,
+      reason: `version match: ${engineVer}`,
+      action: 'continue',
+      resumeVersion: resumeVer,
+      engineVersion: engineVer,
+      schemaMigrationPath,
+      schemaMigrationPathAvailable,
+    };
+  }
+
+  /**
+   * Validate a resume and decide whether the loop can auto-continue.
+   *
+   * R10 第1轮：跨客户端自动续航触发器
+   *
+   * Checks:
+   * 1. RESUME.md exists and parses
+   * 2. engine_version is compatible (same major)
+   * 3. stage is not terminal (open with 0 iterations, or archive completed)
+   * 4. Detects client switch by comparing resume.client with `currentClient`
+   *
+   * Returns a structured decision so the caller (MCP boot / CLI / engine) can
+   * auto-invoke `aza_session(continue)` + `aza_loop(full)` without manual input.
+   */
+  async validateAndResume(currentClient?: string): Promise<{
+    can_resume: boolean;
+    reason: string;
+    resume: ResumeData | null;
+    client_switched: boolean;
+    action: 'resume' | 'restart' | 'noop';
+  }> {
+    const resume = await this.read();
+    if (!resume) {
+      return { can_resume: false, reason: 'No RESUME.md found', resume: null, client_switched: false, action: 'noop' };
+    }
+
+    // R10 第7轮 (D7)：抽取版本校验到 validateVersion()，便于复用与测试
+    const versionCheck = this.validateVersion(resume);
+    if (!versionCheck.compatible) {
+      // 不可恢复（主版本不匹配且无迁移路径）→ 调用方需 reset 重新开始
+      return {
+        can_resume: false,
+        reason: `Engine version incompatible: ${versionCheck.reason}`,
+        resume,
+        client_switched: false,
+        action: versionCheck.action === 'reset' ? 'restart' : 'noop',
+      };
+    }
+
+    // Terminal state: archive completed
+    const isTerminal = resume.current_stage === 'archive' &&
+      (resume.next_action === 'done' || resume.next_action === 'ship' || resume.progress === '100%');
+    // Fresh start: open stage with zero iterations
+    const isFresh = resume.current_stage === 'open' && resume.iteration === 0;
+
+    if (isTerminal) {
+      return { can_resume: false, reason: 'Loop already completed (archive done)', resume, client_switched: false, action: 'noop' };
+    }
+    if (isFresh) {
+      return { can_resume: false, reason: 'Fresh start (open, iteration 0)', resume, client_switched: false, action: 'noop' };
+    }
+
+    // Client switch detection
+    const clientSwitched = !!currentClient &&
+      currentClient !== 'unknown' &&
+      resume.client !== 'unknown' &&
+      resume.client !== currentClient;
+
+    return {
+      can_resume: true,
+      reason: clientSwitched
+        ? `Resuming from ${resume.current_stage} (switched ${resume.client}→${currentClient})`
+        : `Resuming from ${resume.current_stage} (iteration ${resume.iteration})`,
+      resume,
+      client_switched: clientSwitched,
+      action: 'resume',
+    };
   }
 
   async clear(): Promise<void> {

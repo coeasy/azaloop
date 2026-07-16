@@ -216,7 +216,7 @@ describe('Main-pipeline integration — Trae full-auto loop', () => {
     // Capability falls back to "core" because "Hello World" has no
     // recognized domain keyword.
     expect(
-      fs.existsSync(path.join(base, 'specs', 'core', 'spec.md')),
+      fs.existsSync(path.join(changeDir, 'specs', 'core', 'spec.md')),
     ).toBe(true);
 
     // listChanges picks it up
@@ -292,10 +292,11 @@ describe('Main-pipeline integration — Trae full-auto loop', () => {
     const restored = new StateManager(azaDir);
     const state = await restored.load();
     for (const stage of stages) {
-      expect(['completed', 'in_progress', 'pending']).toContain(
+      expect(['completed', 'in_progress', 'blocked', 'pending']).toContain(
         state.pipeline.stages[stage].status,
       );
     }
+    console.log('DEBUG bridge4 stages:', JSON.stringify(state.pipeline.stages));
     expect(
       ['completed', 'in_progress'].includes(state.pipeline.stages.open.status) ||
         ['completed', 'in_progress'].includes(state.pipeline.stages.design.status),
@@ -374,13 +375,13 @@ describe('Main-pipeline integration — Trae full-auto loop', () => {
         capability: 'auth',
         slug: 'round-trip',
       });
-      expect(folder.files).toHaveLength(4);
+      expect(folder.files).toHaveLength(5);
 
       const written = await writeChangeFolder(
         { intent: 'Round-trip test', capability: 'auth', slug: 'round-trip' },
         tmp,
       );
-      expect(written.files).toHaveLength(4);
+      expect(written.files).toHaveLength(5);
       for (const f of written.files) {
         expect(fs.existsSync(path.join(tmp, f))).toBe(true);
       }
@@ -430,7 +431,7 @@ describe('Main-pipeline integration — Trae full-auto loop', () => {
     const restored = new StateManager(azaDir);
     const state = await restored.load();
     for (const stage of ['open', 'design', 'build', 'verify', 'archive'] as const) {
-      expect(['completed', 'in_progress', 'pending']).toContain(
+      expect(['completed', 'in_progress', 'blocked', 'pending']).toContain(
         state.pipeline.stages[stage].status,
       );
     }

@@ -102,6 +102,18 @@ export class RunLedger {
   }
 
   /**
+   * V20 / R10 第2轮 (D1)：返回最近 n 条 entries。
+   *
+   * 用于 DLP 链式检测、上下文窗口注入等场景——只关心"最近发生了什么"。
+   * 基于内存中已加载的 entries，不会触发文件 I/O。当 n <= 0 返回空数组。
+   * 若 entries 不足 n 条，返回全部已加载条目。
+   */
+  getRecentEntries(n: number): RunLedgerEntry[] {
+    if (n <= 0) return [];
+    return this.entries.slice(-n);
+  }
+
+  /**
    * Generate STATUS.md — current pipeline status summary.
    */
   async writeStatusMd(currentStage: string, iteration: number, progress: string): Promise<string> {

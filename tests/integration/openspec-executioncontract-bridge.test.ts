@@ -53,10 +53,8 @@ describe('v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract', () => 
         ],
       },
     });
-    expect(folder.proposal).toContain('## Execution Contract');
-    expect(folder.proposal).toContain('`oauth-2026-07-13`');
-    expect(folder.proposal).toContain('1.1');
-    expect(folder.proposal).toContain('1.2');
+    expect(folder.proposal).toContain('## Contract');
+    expect(folder.proposal).toContain('.aza/contract.md');
   });
 
   it('2) scaffoldChange omits contract section when contract is not provided', () => {
@@ -85,8 +83,8 @@ describe('v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract', () => 
     const proposalPath = path.join(projectRoot, result.files[0]!);
     expect(fs.existsSync(proposalPath)).toBe(true);
     const content = fs.readFileSync(proposalPath, 'utf8');
-    expect(content).toContain('## Execution Contract');
-    expect(content).toContain('oauth-2026-07-13');
+    expect(content).toContain('## Contract');
+    expect(content).toContain('.aza/contract.md');
   });
 
   it('4) PRDReviewGate.approve() with source=openspec returns data with openspec_path', async () => {
@@ -180,7 +178,7 @@ describe('v13 P3.1 — PRDReviewGate ↔ OpenSpec ↔ ExecutionContract', () => 
     const proposalPath = path.join(projectRoot, result.files[0]!);
     const content = fs.readFileSync(proposalPath, 'utf8');
     // The contract section should appear before "## Why"
-    const contractIdx = content.indexOf('## Execution Contract');
+    const contractIdx = content.indexOf('## Contract');
     const whyIdx = content.indexOf('## Why');
     expect(contractIdx).toBeGreaterThanOrEqual(0);
     expect(whyIdx).toBeGreaterThan(contractIdx);

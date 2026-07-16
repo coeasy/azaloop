@@ -2,11 +2,11 @@
 
 ## Product Requirements Document (PRD)
 
-**版本**: 0.4.0
+**版本**: 0.4.3
 **创建日期**: 2026-04-22
-**最后更新**: 2026-07-14
-**状态**: In Progress (0.4.0 — PRD 深度 / 竞品补全 / 严格门禁 / 瘦上下文续航 / 一键 pack)
-**最近更新**: 2026-07-14 PRD 生成接入 GitHub 竞品研究；校验 P0+加权≥85；continue/calibrate 瘦包；escalate 软恢复；`aza pack` 一键构建安装包
+**最后更新**: 2026-07-16
+**状态**: In Progress (0.4.3 — 配置真正生效 / 外层循环开关 / 配置驱动 max_stage_iterations)
+**最近更新**: 2026-07-16 修复「azaloop.yaml 配置不生效」根因（所有入口原只用 getDefaultConfig 硬编码默认值，忽略 yaml）；新增 ConfigLoader.loadSync() 真实读取 yaml；LoopConfigSchema 增加 outer_enabled 字段；azaloop.yaml 显式声明 max_stage_iterations=30 / outer_enabled=true；验证脚本确认 yaml 真正生效（=30/true）
 
 ---
 
@@ -585,6 +585,90 @@ aza init --cursor --full-auto
 | 单元测试 | `pnpm test` |
 | 端到端真实循环 | `npx tsx scripts/e2e-real-loop.ts` |
 | MCP 工具一致性 | 验证 33 handler = 33 schema |
+
+---
+
+## 9.8 本地全自动循环验证报告（2026-07-15）
+
+> 目标：在当前客户端（Node/tsx 模拟宿主）本地验证"全自动循环是否完全生效"——
+> 跨会话/跨客户端续航、文件全量落盘、无死循环、无循环中断、终止语义明确。
+
+### 9.8.1 验证方式与脚本
+
+- 脚本：`scripts/verify-full-auto-loop.ts`（PRD 生成 → 审批 → 反复 `aza_loop(full)` 续航 → 清缓存跨会话恢复 → 终态校验）。
+- 模拟真实宿主：收到 `awaitingAction` 后写交付物标记并 `report_tool` 续跑。
+- 关键断言：`.aza/STATE.yaml` 全程存在、跨会话清缓存后仍能从磁盘 STATE 重建、`escalate/stop` 不再伪装 `completed`。
+
+### 9.8.2 已验证生效（机制层 ✓）
+
+| 验证项 | 结果 |
+|--------|------|
+| PRD 自动生成并落盘 `.aza/prd.json` + `prd.md` | ✓ |
+| 全生命周期 `STATE.yaml` 始终落盘（无中断风险） | ✓ |
+| `RESUME.md` 续航文件生成 | ✓ |
+| 跨会话/跨客户端按磁盘 `STATE` 重建恢复 | ✓（清缓存后仍可读 STATE） |
+| 终止语义：`escalate/stop` 不再伪装 `completed`/`ship` | ✓（本轮修复） |
+| Windows 文件锁健壮性：`STATE`/`PRD` 写失败不崩溃循环 | ✓（本轮修复 rename 降级） |
+
+### 9.8.3 本轮发现并修复的真实 Bug（已合入代码）
+
+1. **终止语义伪装（致命）**：引擎 `escalate`（3-Strike / DP 阻塞）原返回 `done:true`+`completed`，
+   导致客户端误以为任务成功而 `ship` 未完成的产物。已修复为 `escalated/stopped` + `done:false`，
+   绝不 ship。文件：`packages/mcp-server/src/tools/aza-loop.ts`。
+2. **Windows 文件锁崩溃（循环中断）**：`StateManager.atomicWriteState` 与 `FilePersistor.writeFileAtomic`
+   的 `tmp+rename` 在防病毒/索引锁定时抛 `EPERM`/`EBUSY`，使整个循环崩溃中断。已加 rename 失败降级
+   （删旧→rename→直接覆盖），保证落盘不丢数据、不崩循环。
+3. **跨客户端缓存共享（续航串扰）**：同进程内多客户端（如 Cursor+Trae）命中同一内存循环状态缓存，
+   互相污染续航。已改为 `client::root` 隔离键，磁盘 mtime 变化时同步失效。
+4. **PRD 生成重复自优化（浪费 token）**：`review()` 在 `generate()` 已按复杂度自优化后，又跑 3 轮
+   `selfOptimize`，纯属浪费。已移除。
+5. **FilePersistor 未实际使用**：PRD 的 `prd.json`/精修落盘原走裸 `fs.writeFileSync`，已统一改走
+   `FilePersistor`（原子+校验和+重试）。
+6. **跨客户端恢复代际标记缺失**：`RESUME`/`STATE` 未带 `engine_version`，跨版本引擎可能错配恢复。
+   已注入 `AZALOOP_ENGINE_VERSION`。
+7. **跨会话恢复状态被覆盖（致命，9.8.4-1 根因）**：`seedOuterBoardFromPrd` 在每次新建控制器时，
+   用**默认 `open/pending` 状态**调用 `sm.update` 写 `STATE.yaml`，把磁盘上已恢复的真实进度
+   （如 `build:in_progress/blocked`）整体覆盖回默认态。后果：清缓存/崩溃恢复后 `status` 返回 `open`、
+   每次 `full` 因 DP gate 立即 `escalated`、形成"无限 escalated 秒回"。已改为先 `await sm.load()`
+   加载磁盘真实状态再合并，仅当 `outer.board` 为空时补充，绝不覆盖进度。文件：
+   `packages/mcp-server/src/tools/aza-loop.ts`。
+8. **`status` 不反映磁盘真实阶段（9.8.4-1 表现）**：`handleAutoLoop('status')` 原返回内存默认 `open`，
+   清缓存后误导客户端。已改为先 `syncStageFromDisk()` 再报告真实阶段，并新增 `AutoLoopDriver.syncStageFromDisk()`
+   在每个 `step()` 起始从 `STATE.yaml` 重建阶段，避免 stale `currentStage` 覆盖恢复阶段。文件：
+   `packages/mcp-server/src/tools/aza-loop.ts`、`packages/core/src/L7_loop/auto-loop-driver.ts`。
+9. **`maxStageIterations` 硬编码 5（9.8.4-2）**：真实工程 build 需多轮"写码→测试→修复"，5 次不足。
+   已改为可配置：默认 `20`（`azaloop.yaml` `loop.max_stage_iterations`，`LoopConfigSchema` 新增字段），
+   支持环境变量 `AZA_MAX_STAGE_ITERATIONS` 覆盖；`LoopController` 构造函数与 `buildController`、CLI
+   （`aza loop` / `aza daemon` / `aza audit`）统一走配置值。文件：`packages/shared/src/schemas/config.schema.ts`、
+   `packages/core/src/L7_loop/loop-controller.ts`、`packages/mcp-server/src/tools/aza-loop.ts`、
+   `packages/cli/src/commands/{loop,daemon,audit}.ts`。
+10. **`azaloop.yaml` 配置完全不生效（关键，R11）**：所有入口（MCP `buildController`、CLI `aza loop`/`daemon`/`audit`）
+   原调用 `loader.getDefaultConfig()`，返回**硬编码默认值**，`azaloop.yaml` 中的 `loop` 配置被整体无视。
+   后果：用户改 `max_stage_iterations`/`outer_enabled` 无效，全自动循环始终用代码默认值跑。已新增
+   `ConfigLoader.loadSync()`（同步读 yaml 并 `AzaloopConfigSchema.parse`，缺失/解析失败安全回退默认），
+   所有入口改用 `loadSync()`；`LoopConfigSchema` 新增 `outer_enabled` 字段（默认 true）使 yaml 可配置外层循环；
+   `azaloop.yaml` 现显式声明 `max_stage_iterations: 30` / `outer_enabled: true`。验证脚本确认仓库 yaml 真实生效
+   （`loadSync().loop.max_stage_iterations === 30`、`outer_enabled === true`）。文件：
+   `packages/core/src/config/config-loader.ts`、`packages/shared/src/schemas/config.schema.ts`、
+   `packages/mcp-server/src/tools/aza-loop.ts`、`packages/cli/src/commands/{loop,daemon,audit}.ts`、`azaloop.yaml`。
+
+### 9.8.4 仍需关注的风险（如实记录，非本轮修复）
+
+1. **build/verify 门禁依赖真实工程**：`build` 完成需真实可编译源码 + `tsc --noEmit` + `vitest` 通过
+   （验证脚本仅写 marker，故被正确 escalated——证明门禁生效，非循环失效）。真客户端须由
+   `aza_spec(implement)` 产出可编译源码与测试，门禁方放行。这是**正确行为**，非 bug。
+2. **预存测试基线失败**：`circuit-breaker`/`tool-registry`/`openspec` 等 16 个用例在干净基线即失败
+   （与本轮重构无关），属"代码演进而测试未同步"，需单独排期清理。
+
+> 已解决（2026-07-16）：跨会话恢复阶段不一致、状态落盘覆盖恢复进度、无限 escalated 秒回、`maxStageIterations`
+> 硬编码（9.8.4-1/2），以及 `azaloop.yaml` 配置不生效（R11）。均由 `scripts/verify-full-auto-loop.ts` 回归验证通过。
+
+### 9.8.5 下一步开发计划
+
+- [x] 修复跨会话恢复阶段不一致与状态覆盖（9.8.4-1）— 已修复并验证。
+- [x] `maxStageIterations` 配置化（9.8.4-2）— 已修复并验证。
+- [ ] 清理预存失败测试（9.8.4 风险 2）。
+- [ ] 真客户端 E2E：在含真实 TS 源码+测试的项目中跑通 `review→approve→loop(full)` 至 `completed`。
 
 ---
 

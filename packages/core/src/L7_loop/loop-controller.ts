@@ -14,8 +14,12 @@ import { OuterLoop, type StoryProvider, type HumanGateFn, type CommitFn, type Ou
 import { createRealHandlerProvider } from './real-handlers';
 import { StateManager } from '../state/state-manager';
 import { RunStateManager, AuditLog } from '../state/state-manager';
+// R10 第2轮 (D1)：导入 RunLedger 以便 DLP 链式检测读取最近条目
+import { RunLedger } from '../state/run-ledger';
 import { ContextOrchestrator, type ContextEntryBundle } from '../L2_memory/context-orchestrator';
 import type { ContextEntry } from '../L2_memory/context-orchestrator';
+// R10 第3轮 (D3)：导入 FilePersistor 以接入主循环 checkpoint 落盘
+import { FilePersistor } from '../L2_memory/file-persistor';
 import { InjectionEngine } from '../L9_knowledge/injection-engine';
 import { ConfigLoader } from '../config/config-loader';
 import { DecisionPointRegistry, contentHash, type DecisionPointRecord, type DPStatus } from './decision-points';
@@ -77,6 +81,18 @@ export class LoopController {
   auditLog: AuditLog | null = null;
   /** Loaded azaloop.yaml config (auto-resolved from project root) */
   readonly config: AzaloopConfig;
+
+  /**
+   * R10 第2轮 (D1)：RunLedger 句柄，供 DLP 链式检测读取最近条目。
+   * 与 resumeGen 共享同一份 run-ledger.jsonl；首次使用前需 load()。
+   */
+  private runLedger: RunLedger | null = null;
+
+  /**
+   * R10 第3轮 (D3)：统一文件落盘器，主循环每轮 checkpoint 持久化所有关键产物。
+   * 确保主循环 next() 不再遗漏 prd.md/contract.md/loop.md 的落盘。
+   */
+  private filePersistor: FilePersistor | null = null;
 
   /** V12: Handler provider for maker/checker/optimizer */
   private handlerProvider: StageHandlerProvider;
@@ -143,7 +159,7 @@ export class LoopController {
       effectiveConfig = {
         version: '4.0',
         project: { name: 'azaloop', root: '.' },
-        loop: { max_iterations: 50, deadlock_threshold: 3, hard_stop_on_security: true },
+        loop: { max_iterations: 50, max_stage_iterations: 20, outer_enabled: true, deadlock_threshold: 3, hard_stop_on_security: true },
         memory: { enabled: true, episodic_max: 100, compression_threshold: 50 },
         quality: { gates: { lint: true, test: true, regression: true, security: true, acceptance: true } },
         rules: [],
@@ -154,9 +170,18 @@ export class LoopController {
     this.config = effectiveConfig;
 
     this.options = options;
+    // R10: maxStageIterations 配置化（9.8.4-2）。优先级：
+    // 显式 options.maxStageIterations > AZA_MAX_STAGE_ITERATIONS 环境变量 > azaloop.yaml loop.max_stage_iterations > 默认 20
+    const envMaxStage = Number(process.env.AZA_MAX_STAGE_ITERATIONS);
+    const resolvedMaxStageIterations =
+      options.maxStageIterations ??
+      (Number.isFinite(envMaxStage) && envMaxStage > 0
+        ? envMaxStage
+        : effectiveConfig.loop.max_stage_iterations) ??
+      20;
     this.configLoopOptions = {
       maxIterations: options.maxIterations ?? effectiveConfig.loop.max_iterations,
-      maxStageIterations: options.maxStageIterations ?? 5,
+      maxStageIterations: resolvedMaxStageIterations,
       maxStrikes: options.maxStrikes ?? 3,
       deadlockThreshold: options.deadlockThreshold ?? effectiveConfig.loop.deadlock_threshold,
       hardStopOnSecurity: options.hardStopOnSecurity ?? effectiveConfig.loop.hard_stop_on_security,
@@ -237,6 +262,15 @@ export class LoopController {
     // Initialize ResumeGenerator for run-ledger access
     if (this.configLoopOptions.azaDir) {
       this.resumeGen = new ResumeGenerator(this.configLoopOptions.azaDir);
+      // R10 第2轮 (D1)：初始化 RunLedger 并异步加载历史条目，
+      // 供 DLP 链式检测、上下文恢复等场景使用。load() 失败非致命。
+      this.runLedger = new RunLedger(this.configLoopOptions.azaDir);
+      this.runLedger.load().catch(() => {
+        // best-effort: missing run-ledger.jsonl is non-fatal
+      });
+      // R10 第3轮 (D3)：初始化 FilePersistor，主循环每轮 checkpoint
+      // 通过 persistCheckpoint() 持久化 loop.md 并验证所有产物。
+      this.filePersistor = new FilePersistor(this.configLoopOptions.azaDir);
     }
 
     // V20 Task 11: Initialize DLP chain detector
@@ -491,9 +525,21 @@ export class LoopController {
           if (hasMaterialChange(diff)) {
             this.driftDetected = true;
           } else {
-            // 差异小，仅记录到 ledger
-            // LoopAudit 没有 record 方法，此处仅作为占位注释
-            // 实际实现可能需要使用 RunLedger 或其他审计日志机制
+            // R10 第2轮 (D2)：差异小但确实变了，写入 audit.jsonl 作为 minor_drift
+            // 记录。原先只是占位注释——导致 PRD 微调完全无审计痕迹。
+            this.auditLog?.append({
+              type: 'minor_drift',
+              source: 'prd_content_diff',
+              before: { sha: this.lastHashes.prd },
+              after: { sha: newHashes.prd },
+              details: {
+                target: 'prd',
+                fieldCount: diff.fields.length,
+                overallChangeRatio: diff.overallChangeRatio,
+                fields: diff.fields.map(f => ({ field: f.field, changeRatio: f.changeRatio })),
+                material: false,
+              },
+            }).catch(() => { /* best-effort: audit log failure is non-fatal */ });
           }
         } else {
           // 无法解析 PRD，回退到哈希比对
@@ -506,6 +552,20 @@ export class LoopController {
           const diff = diffContract(this.lastContract, currentContract);
           if (hasMaterialChange(diff)) {
             this.driftDetected = true;
+          } else {
+            // R10 第2轮 (D2)：contract 微调也写入 audit.jsonl，保持审计一致性
+            this.auditLog?.append({
+              type: 'minor_drift',
+              source: 'contract_content_diff',
+              before: { sha: this.lastHashes.contract },
+              after: { sha: newHashes.contract },
+              details: {
+                target: 'contract',
+                lineChanges: diff.lineChanges,
+                changeRatio: diff.changeRatio,
+                material: false,
+              },
+            }).catch(() => { /* best-effort: audit log failure is non-fatal */ });
           }
         } else {
           this.driftDetected = true;
@@ -563,6 +623,63 @@ export class LoopController {
         // best-effort: RESUME.md generation failure is non-fatal
       });
     }
+
+    // R10 第3轮 (D3)：主循环 checkpoint——持久化 loop.md 并验证所有产物。
+    // 原先 syncStateToFile 只写 STATE.yaml + RESUME.md，遗漏 prd.md/contract.md/loop.md。
+    // 现在 FilePersistor.persistCheckpoint 会写入 loop.md 摘要并 verifyAll()，
+    // 任何产物损坏都会触发 alert（不阻断主流程）。
+    if (this.filePersistor) {
+      const loopMd = this.buildLoopMarkdown(memState, currentState);
+      await this.filePersistor.persistCheckpoint({ loopMd }).catch(() => {
+        // best-effort: checkpoint failure is non-fatal (alert already fired inside)
+      });
+    }
+  }
+
+  /**
+   * R10 第3轮 (D3)：从当前 state 生成 loop.md 摘要。
+   *
+   * loop.md 是人类可读的循环进度快照——跨客户端/跨会话恢复时，
+   * 宿主 AI 可直接读取此文件了解"循环走到哪了"，无需解析 STATE.yaml。
+   */
+  private buildLoopMarkdown(
+    memState: ReturnType<StateMachine['getState']>,
+    currentState: ReturnType<StateManager['getState']>,
+  ): string {
+    const now = new Date().toISOString();
+    const entry = this.getStageEntryAction(memState.current_stage);
+    const stageStatuses = Object.entries(memState.stages)
+      .map(([s, info]: [string, any]) => `- **${s}**: ${info?.status ?? 'unknown'}`)
+      .join('\n');
+    const strikes = currentState.strikes ?? 0;
+    return [
+      '# AzaLoop Progress',
+      '',
+      `> Auto-generated checkpoint at ${now}`,
+      '',
+      '| Field | Value |',
+      '|-------|-------|',
+      `| Stage | ${memState.current_stage} |`,
+      `| Iteration | ${memState.iteration} |`,
+      `| Progress | ${this.stateMachine.getProgress()} |`,
+      `| Client | ${currentState.loop.client || '(unknown)'} |`,
+      `| Model | ${currentState.loop.model || '(unknown)'} |`,
+      `| Strikes | ${strikes} |`,
+      `| Engine Version | ${AZALOOP_ENGINE_VERSION} |`,
+      '',
+      '## Stage Status',
+      '',
+      stageStatuses || '(no stages)',
+      '',
+      '## Next Action',
+      '',
+      `Run \`${entry.tool}\` with action \`${entry.action}\` to continue the loop.`,
+      '',
+      '## Recovery',
+      '',
+      'To resume this loop in any client, run: `aza continue`',
+      '',
+    ].join('\n');
   }
 
   // ── V11 compatibility: condition-based guards ──
@@ -602,17 +719,65 @@ export class LoopController {
       }, true);
     }
 
+    // R10 第8轮 (D10 深化)：内容哈希停滞检测——按迭代次数判定。
+    // 与 checkNoProgress 互补：循环可能快速空转（每秒 1 轮但内容不变），
+    // 时间检测 30min 才会触发，内容检测 5 轮即可触发，更快暴露死循环。
+    // 仅在已收集足够 contentHash 条目后启用（避免误杀早期初始化阶段）。
+    {
+      const entries = this.ledger2d.getEntries();
+      if (entries.length >= 5) {
+        const stagnation = this.deadlockDetector.checkContentStagnationFromEntries(entries);
+        if (stagnation.deadlocked) {
+          this.hardStop.stop(
+            'max_iterations_exceeded',
+            `content_stagnation_recovery: ${stagnation.reason ?? 'content unchanged across iterations'}`,
+            this.stateMachine.getState().iteration,
+          );
+          // 记录审计：内容停滞比时间停滞更隐蔽，需明确落盘便于追溯
+          try {
+            this.auditLog?.append({
+              type: 'hard_stop',
+              source: 'deadlock-detector.checkContentStagnation',
+              details: {
+                reason: stagnation.reason,
+                consecutiveCount: stagnation.consecutiveCount,
+                lastChangeAt: this.ledger2d.getLastChangeAt(),
+                iteration: this.stateMachine.getState().iteration,
+              },
+            });
+          } catch {
+            /* best-effort */
+          }
+          return this.buildResponse(this.stateMachine.getCurrentStage(), {
+            tool: 'aza_loop',
+            action: 'stop',
+            reason: stagnation.reason ?? 'content_stagnation_recovery',
+          }, true);
+        }
+      }
+    }
+
     // G1: Record this iteration into the 2D progress ledger so crash
     // recovery and no-progress detection can reason about the most
     // recent stage/iteration pair.
     {
       const stageForRecord = (currentStage as Stage | undefined) ?? this.stateMachine.getCurrentStage();
       const stageIter = this.stageIterations.get(stageForRecord) ?? 0;
+      // R10 第2轮 (D10)：把 PRD/contract 哈希一起记入账本。
+      // 原先只记 stage/iteration，用户在同一 stage 反复修改 PRD 时会被
+      // 误判为"无进展"而触发 hard-stop。现在将内容哈希拼接后传入，
+      // ProgressLedger2D 会在哈希变化时刷新 lastChangeAt。
+      let stageContentHash: string | undefined;
+      if (this.lastHashes.prd || this.lastHashes.contract) {
+        stageContentHash = [this.lastHashes.prd, this.lastHashes.contract]
+          .filter(Boolean).join('|') || undefined;
+      }
       this.ledger2d.record(
         stageForRecord,
         this.stateMachine.getState().iteration,
         stageIter,
         'in_progress',
+        stageContentHash,
       );
     }
 
@@ -713,6 +878,9 @@ export class LoopController {
       } as any,
       iteration: this.stateMachine.getState().iteration,
     });
+    // R10 第5轮 (D5)：切换到新 story 时重置 per-task 预算，
+    // 避免上一个 story 的 token 累积到当前 story。
+    this.tokenBudget.resetPerTask();
     this.stateMachine.setInnerLoopState({ current_story: nextStory } as any);
     await this.stateManager.update({
       pipeline: {
@@ -890,11 +1058,11 @@ export class LoopController {
     }
 
     // V20 Task 11: DLP 链式检测
+    // R10 第2轮 (D1)：用真实 RunLedger 最近 20 条记录替换空数组占位符。
+    // 这是断链已久的关键安全检查——原先 `[]` 永远检不出 DLP 链。
     if (this.dlpDetector && this.resumeGen) {
       try {
-        // ResumeGenerator 没有 getRecentEntries 方法，这里使用空数组作为占位
-        // 实际实现需要从 RunLedger 获取
-        const recentEntries: import('../state/run-ledger').RunLedgerEntry[] = [];
+        const recentEntries = this.runLedger?.getRecentEntries(20) ?? [];
         const chainReport = this.dlpDetector.detectChain(recentEntries);
         if (chainReport.detected) {
           this.hardStop.stop('security_blocker', `DLP chain detected: ${chainReport.reason}`, this.stateMachine.getState().iteration);
@@ -1229,6 +1397,10 @@ export class LoopController {
     this.stateMachine.advance();
     const nextStage = this.stateMachine.getCurrentStage();
     this.stateMachine.setStageStatus(nextStage, 'in_progress');
+    // R10 第5轮 (D5)：进入新 stage 时重置 per-task 预算。
+    // 原先 resetPerTask() 从未被调用——导致 per-task 限流累积跨 stage，
+    // 后续 stage 一开始就接近上限，触发误压缩/误停止。
+    this.tokenBudget.resetPerTask();
 
     const dpMap: Record<string, { id: 'DP-0' | 'DP-1' | 'DP-2' | 'DP-3' | 'DP-4'; from: any; to: any }> = {
       open: { id: 'DP-1', from: 'open', to: 'design' },

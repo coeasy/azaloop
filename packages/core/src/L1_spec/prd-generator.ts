@@ -3,6 +3,7 @@ import { PRDChecker, type PRDCheckResult } from './prd-checker';
 import { buildCompetitiveAppendixSync } from './github-competitive-research';
 import {
   PRD_DRAFT_PROMPT,
+  readCompetitiveResearchFile,
   type CompetitiveContext,
 } from './prd-llm-prompts';
 import * as fs from 'fs';
@@ -185,6 +186,156 @@ export class PRDGenerator {
     }
 
     return this.attachMetadata(parsed, complexity, productType, use14Chapters);
+  }
+
+  /**
+   * R10 第10轮 (D9)：确定性模板生成——不依赖 LLM 的骨架 PRD。
+   *
+   * 借鉴 ruflo「deterministic baseline」思路：先用规则生成一个保底 PRD，
+   * 再用 LLM 生成增强版本；若 LLM 版本质量分低于确定性模板，则回退。
+   *
+   * 用途：
+   * 1. 作为 LLM 生成的基线对照（quality gate 比较）
+   * 2. LLM 不可用时的 fallback
+   * 3. 简单需求（L1/L2）直接使用，省 token
+   *
+   * @param input  PRD 生成输入
+   * @returns 符合 PRDSchema 的骨架 PRD
+   */
+  generateDeterministicTemplate(input: PRDGenerationInput): PRD {
+    const now = new Date().toISOString();
+    const description = input.description ?? input.title ?? '';
+    const complexity = input.complexity || this.inferComplexity(description);
+    const productType = input.productType || this.detectProductType(input.title, description);
+
+    // 基于产品类型生成 overview 骨架
+    const overview = this.buildDeterministicOverview(input.title, description, productType);
+
+    // 基于 complexity 生成 stories 数量
+    const storyCount: Record<Complexity, number> = { L1: 2, L2: 3, L3: 5, L4: 6 };
+    const n = storyCount[complexity];
+
+    const goals = this.extractGoals(overview);
+    const functionalRequirements = this.extractFunctionalRequirements(overview);
+    const stories = this.generateDeterministicStories(input.title, overview, n, functionalRequirements, goals);
+    const flatAcs = stories.flatMap((s) => s.acceptance_criteria || []);
+    const risks = this.assessRisks(overview, input.constraints || [], complexity, productType);
+    const architecture = this.generateArchitecture(complexity, productType);
+
+    const prd: PRD = {
+      id: `PRD-${Date.now()}`,
+      title: input.title,
+      version: '1.0.0',
+      created_at: now,
+      updated_at: now,
+      overview,
+      goals,
+      target_users: this.extractTargetUsers(overview, productType),
+      functional_requirements: functionalRequirements,
+      non_functional_requirements: this.extractNonFunctionalRequirements(overview),
+      stories,
+      architecture,
+      acceptance_criteria: flatAcs,
+      risks,
+    };
+
+    return PRDSchema.parse(prd);
+  }
+
+  /**
+   * R10 第10轮 (D9)：构建确定性 overview——基于产品类型的模板化描述。
+   * 不调用 LLM，不依赖外部数据源，纯规则生成。
+   */
+  private buildDeterministicOverview(
+    title: string,
+    description: string,
+    productType: ProductType,
+  ): string {
+    const { commercialization, category, label } = productType;
+    const parts: string[] = [];
+
+    parts.push(`# ${title}\n`);
+    parts.push(`**产品类型**：${label}（${commercialization}/${category}）\n`);
+
+    // 痛点描述——基于产品类型差异化
+    const painPointMap: Record<ProductCategory, string> = {
+      business: `当前业务流程存在手动操作多、协作效率低、数据孤岛等痛点，亟需通过「${title}」实现自动化与数字化。`,
+      tool: `现有工具在「${description.slice(0, 60) || title}」场景下效率不足，操作步骤繁琐，缺乏统一入口。`,
+      transaction: `交易链路存在信任成本高、结算周期长、风控缺失等痛点，需要「${title}」提供闭环交易能力。`,
+      infrastructure: `基础设施层面存在可观测性不足、弹性伸缩受限、运维成本高等问题，「${title}」需提供平台化能力。`,
+    };
+    parts.push(`## 痛点\n${painPointMap[category]}\n`);
+
+    // 目标——基于商业化类型
+    const goalMap: Record<CommercializationType, string> = {
+      commercial: `面向外部用户收费，需在 ${new Date().getFullYear()} Q4 前完成 MVP 上线，验证付费意愿。`,
+      internal: `面向内部团队降本增效，目标节省工时 ≥ 30%，3 个月内完成上线。`,
+    };
+    parts.push(`## 目标\n${goalMap[commercialization]}\n`);
+
+    // 约束——从 description 提取
+    if (description) {
+      parts.push(`## 描述\n${description}\n`);
+    }
+
+    // 竞品占位（确定性模板不调用竞品研究，留 LLM 增强）
+    parts.push(`## 竞品参考\n（待 LLM 增强时从 GitHub 竞品研究注入）\n`);
+
+    // 差异化——基于产品类型
+    const diffMap: Record<ProductCategory, string> = {
+      business: `差异化在于业务流程闭环 + 角色权限精细控制，区别于通用工具。`,
+      tool: `差异化在于「一键式」操作 + 离线能力，区别于重型 SaaS。`,
+      transaction: `差异化在于风控内嵌 + 结算透明，区别于纯支付通道。`,
+      infrastructure: `差异化在于多租户隔离 + 可观测性内置，区别于裸 IaaS。`,
+    };
+    parts.push(`## 差异化\n${diffMap[category]}\n`);
+
+    return parts.join('\n');
+  }
+
+  /**
+   * R10 第10轮 (D9)：生成确定性 stories——基于 FR 模板化拆分。
+   * 不依赖 LLM，按 FR 数量和 complexity 级别生成骨架 story。
+   */
+  private generateDeterministicStories(
+    title: string,
+    overview: string,
+    count: number,
+    frs: Array<{ id: string; description: string; priority: string }>,
+    goals: string[],
+  ): Story[] {
+    const stories: Story[] = [];
+    const priorities = ['P0', 'P0', 'P1', 'P1', 'P2', 'P2'];
+
+    for (let i = 0; i < count; i++) {
+      const fr = frs[i] || frs[0];
+      const storyId = `STORY-${String(i + 1).padStart(3, '0')}`;
+      stories.push({
+        id: storyId,
+        title: `${title} - 功能 ${i + 1}`,
+        description: `作为用户，我希望${fr?.description || '实现核心功能'}，以便达成业务目标。`,
+        priority: (priorities[i] || 'P2') as 'P0' | 'P1' | 'P2',
+        complexity: 'L2',
+        acceptance_criteria: [
+          {
+            id: `${storyId}-AC-1`,
+            description: `当用户触发「${fr?.description || '核心功能'}」时，系统在 2 秒内返回成功结果（P95）。`,
+            testable: true,
+            status: 'pending',
+          },
+          {
+            id: `${storyId}-AC-2`,
+            description: `当输入无效数据或网络断开时，系统显示错误提示并提供重试按钮，不崩溃。`,
+            testable: true,
+            status: 'pending',
+          },
+        ],
+        dependencies: i > 0 ? [`STORY-${String(i).padStart(3, '0')}`] : [],
+        status: 'pending',
+      });
+    }
+
+    return stories;
   }
 
   private injectCompetitiveOverview(
@@ -935,7 +1086,14 @@ export class PRDGenerator {
     const productType = options.productType || input.productType || this.detectProductType(input.title, description);
     const use14Chapters = options.enable_14chapters ?? (complexity === 'L4' || complexity === 'L3');
 
-    return PRD_DRAFT_PROMPT(input, competitive, complexity, productType, use14Chapters);
+    // R10 第10轮 (D9)：从 .aza/competitive-research.md 注入竞品研究文件
+    let competitiveResearchFile: string | null = null;
+    try {
+      const azaDir = process.env.AZA_DIR || path.join(process.cwd(), '.aza');
+      competitiveResearchFile = readCompetitiveResearchFile(azaDir);
+    } catch { /* best-effort */ }
+
+    return PRD_DRAFT_PROMPT(input, competitive, complexity, productType, use14Chapters, competitiveResearchFile);
   }
 
   /**

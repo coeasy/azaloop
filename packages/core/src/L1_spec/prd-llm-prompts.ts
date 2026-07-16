@@ -7,10 +7,38 @@
  * - gstack 4 角色审查：CEO/QA/Eng/Design
  *
  * 每个_prompt 都含「反合理化表」（借口 vs 现实），防止 LLM 走捷径。
+ *
+ * R10 第10轮 (D9) 增强：
+ * - PRD_DRAFT_PROMPT 新增「反面示例」段（展示常见错误）
+ * - PRD_DRAFT_PROMPT 新增「竞品研究文件注入」（从 .aza/competitive-research.md）
+ * - readCompetitiveResearchFile 同步读取辅助函数
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import type { PRD } from '@azaloop/shared';
 import type { PRDGenerationInput, Complexity, ProductType } from './prd-generator';
+
+/**
+ * R10 第10轮 (D9)：同步读取 .aza/competitive-research.md 文件内容。
+ *
+ * 若文件存在则返回其内容（用于注入 PRD_DRAFT_PROMPT），
+ * 否则返回 null。调用方按 null 回退到内置 competitive context。
+ *
+ * 借鉴 pm-claude-skills「contextual injection」：把外部研究产物
+ * 显式注入 prompt，让 LLM 看到真实竞品数据而非自行脑补。
+ */
+export function readCompetitiveResearchFile(baseDir: string): string | null {
+  const filePath = path.join(baseDir, 'competitive-research.md');
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const content = fs.readFileSync(filePath, 'utf8');
+    // 截断超长内容（避免 prompt 膨胀），保留前 4000 字符
+    return content.length > 4000 ? content.slice(0, 4000) + '\n…（已截断）' : content;
+  } catch {
+    return null;
+  }
+}
 
 // ── Types ──
 
@@ -85,12 +113,17 @@ export const ADVERSARIAL_PRINCIPLE = `
 /**
  * 生成 PRD 草稿的指令（给宿主 AI）。
  * 宿主 AI 根据用户输入+竞品研究，生成符合 PRDSchema 的 JSON。
- * 
+ *
  * V21 改进：
  * - 添加具体示例（正面+反面）
  * - 产品类型差异化（B端/C端/工具型）
  * - 增强 AC 硬规则（可测试+无歧义+覆盖异常+可追溯）
  * - 问题陈述三段式（现状与证据、影响与代价、时机与约束）
+ *
+ * R10 第10轮 (D9) 增强：
+ * - 新增「反面示例」段（展示 PRD 生成常见错误，让 LLM 主动规避）
+ * - 新增「竞品研究文件注入」段（从 .aza/competitive-research.md 读取真实研究产物）
+ * - 新增 competitiveResearchFile 可选参数
  */
 export function PRD_DRAFT_PROMPT(
   input: PRDGenerationInput,
@@ -98,6 +131,11 @@ export function PRD_DRAFT_PROMPT(
   complexity: Complexity,
   productType: ProductType,
   use14Chapters: boolean,
+  /**
+   * R10 第10轮 (D9)：从 .aza/competitive-research.md 读取的竞品研究文件内容。
+   * 若提供则注入 prompt，让 LLM 看到真实研究数据而非脑补。
+   */
+  competitiveResearchFile: string | null = null,
 ): string {
   const competitorBlock = competitive
     ? `
@@ -116,6 +154,24 @@ ${competitive.goals.slice(0, 3).map((g) => `- ${g}`).join('\n')}
 
 无可用竞品数据。请基于你的知识补充至少 2 个相关开源项目作为竞品参考。
 `;
+
+  // R10 第10轮 (D9)：注入 .aza/competitive-research.md 文件内容
+  const researchFileBlock = competitiveResearchFile
+    ? `
+## 竞品研究文件（来自 .aza/competitive-research.md，优先级高于上方内置研究）
+
+以下是项目方提供的竞品研究产物，请优先参考其结论：
+
+\`\`\`markdown
+${competitiveResearchFile}
+\`\`\`
+
+**要求**：
+1. 若文件中已列出竞品 URL，overview 中必须引用至少 2 个
+2. 若文件中已给出差异化要点，overview 的「差异化」段必须呼应
+3. 若文件与内置 competitive context 冲突，以文件为准（更接近项目真实意图）
+`
+    : '';
 
   const chapterBlock = use14Chapters
     ? `
@@ -146,6 +202,9 @@ ${competitive.goals.slice(0, 3).map((g) => `- ${g}`).join('\n')}
   // V21: 具体示例（正面+反面）
   const examplesBlock = getPrdExamples(complexity);
 
+  // R10 第10轮 (D9)：反面示例段——展示 PRD 生成常见错误，让 LLM 主动规避
+  const antiPatternsBlock = getPrdAntiPatterns();
+
   return `# 任务：生成高质量 PRD 草稿
 
 ## 用户输入
@@ -156,9 +215,11 @@ ${competitive.goals.slice(0, 3).map((g) => `- ${g}`).join('\n')}
 - **产品类型**：${productType.label}
 
 ${competitorBlock}
+${researchFileBlock}
 ${chapterBlock}
 ${productTypeGuidance}
 ${examplesBlock}
+${antiPatternsBlock}
 
 ## 输出要求
 
@@ -366,6 +427,83 @@ function getPrdExamples(complexity: Complexity): string {
 \`\`\`
 跨部门协作效率低，需要改进。
 \`\`\`
+`;
+}
+
+/**
+ * R10 第10轮 (D9)：PRD 反面示例段——展示 PRD 生成常见错误。
+ *
+ * 借鉴 check-prd-skill「anti-pattern detection」：
+ * 把常见错误显式列出来，让 LLM 在生成时主动规避而非事后审查。
+ * 与现有 ANTI_RATIONALIZATION_TABLE 互补——前者是「借口表」（生成时），
+ * 本段是「错误集」（生成前预览）。
+ */
+function getPrdAntiPatterns(): string {
+  return `
+## PRD 反面示例（必须规避的常见错误）
+
+以下错误在实际 PRD 生成中高频出现，生成时必须主动规避：
+
+### 1. 空洞 overview（无痛点、无竞品、无差异化）
+
+❌ **错误**：
+\`\`\`
+这是一个协作工具，帮助用户更好地协作。我们将提供优秀的用户体验和强大的功能。
+\`\`\`
+
+✅ **正确**：overview ≥ 200 字，必须包含「痛点（含数据）+ 竞品引用（≥2 个 URL）+ 差异化说明」三段。
+
+### 2. 模糊 AC（不可测试、无阈值）
+
+❌ **错误**：
+\`\`\`json
+{ "id": "AC-1", "description": "系统应该保证安全性", "testable": true }
+\`\`\`
+
+✅ **正确**：AC 必须含具体数值/条件/结果，如「当用户输入错误密码 3 次后，账户锁定 15 分钟」。
+
+### 3. 占位符填充（TBD/待补充/稍后完善）
+
+❌ **错误**：
+\`\`\`
+"overview": "待补充",
+"risks": [{ "description": "后续评估", "mitigation": "TBD" }]
+\`\`\`
+
+✅ **正确**：所有字段必须有实质内容，缺失时宁可省略字段也不填占位符。
+
+### 4. MVP 范围膨胀（P0 故事过多）
+
+❌ **错误**：MVP 阶段定义 6 个 P0 故事，声称「都是必须的」。
+
+✅ **正确**：MVP 聚焦 ≤3 个 P0 故事，其余降级为 P1/P2。
+
+### 5. 风险无缓解措施
+
+❌ **错误**：
+\`\`\`json
+{ "description": "技术风险", "probability": "high", "mitigation": "" }
+\`\`\`
+
+✅ **正确**：高风险项必须有具体 mitigation（≥20 字），如「引入熔断器，失败率 > 5% 时降级」。
+
+### 6. 故事无异常路径
+
+❌ **错误**：story AC 只描述「用户提交表单 → 成功」，不提网络断开/输入无效/超时。
+
+✅ **正确**：每个 story 至少 1 条 AC 覆盖异常场景（如「网络断开时显示错误提示并提供重试按钮」）。
+
+### 7. 竞品引用无 URL
+
+❌ **错误**：「参考了竞品 A 和竞品 B」—— 无 URL，无法验证。
+
+✅ **正确**：竞品引用必须含 GitHub URL（≥2 个），如 \`https://github.com/xxx/xxx\`。
+
+### 8. 架构图缺失或空洞
+
+❌ **错误**：\`"architecture": []\` 或 mermaid 图只有 1 个节点。
+
+✅ **正确**：architecture 必须有 mermaid 图，至少 3 个组件 + 数据流箭头。
 `;
 }
 

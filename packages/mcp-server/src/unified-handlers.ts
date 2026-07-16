@@ -145,6 +145,7 @@ export async function handleAzaPrd(
   resumeGenerator: ResumeGenerator,
 ): Promise<unknown> {
   const action = String(args.action ?? 'review');
+  const client = typeof args.client === 'string' ? args.client.trim() : undefined;
   switch (action) {
     case 'review': {
       const autoApprove =
@@ -174,7 +175,7 @@ export async function handleAzaPrd(
         if ((approved as any)?.success !== false) {
           const workspace =
             (args.workspace_path as string) || stateManager.azaDir?.replace(/[\\/]\.aza$/, '') || process.cwd();
-          await markPrdApproved(workspace);
+          await markPrdApproved(workspace, client);
         }
         return {
           ...approved,
@@ -205,7 +206,7 @@ export async function handleAzaPrd(
       if ((approved as any)?.success !== false && (approved as any)?.data?.approved !== false) {
         const workspace =
           (args.workspace_path as string) || stateManager.azaDir?.replace(/[\\/]\.aza$/, '') || process.cwd();
-        await markPrdApproved(workspace);
+        await markPrdApproved(workspace, client);
       }
       return remapNext(approved, { tool: 'aza_loop', action: 'full' });
     }
@@ -296,6 +297,7 @@ export async function handleAzaAuto(
     stateManager.azaDir?.replace(/[\\/]\.aza$/, '') ||
     process.cwd();
   const maxIterations = Number(args.max_iterations ?? 50);
+  const client = typeof args.client === 'string' ? args.client.trim() : undefined;
 
   if (!userInput) {
     return {
@@ -380,7 +382,7 @@ export async function handleAzaAuto(
       );
 
       // 标记 PRD 已审批（解锁 open→design）
-      await markPrdApproved(workspace);
+      await markPrdApproved(workspace, client);
 
       // R2: 把 task_id + user_input_hash 写入 RESUME（确保下次恢复能校验）
       try {
@@ -395,7 +397,7 @@ export async function handleAzaAuto(
 
     // Step 3: 使用缓存的 AutoLoopDriver（确保与 aza_loop(report_tool) 状态一致）
     const { buildDriver } = await import('./tools/aza-loop');
-    const driver = buildDriver(workspace);
+    const driver = buildDriver(workspace, client);
 
     // Step 4: 真正全自动循环 - 循环步进直到 awaitingAction 或 done
     const maxSteps = Number(process.env.AZA_AUTO_MAX_STEPS ?? maxIterations);
@@ -560,28 +562,29 @@ export async function handleAzaLoop(args: Record<string, unknown>): Promise<unkn
   const action = String(args.action ?? 'step');
   const workspace = args.workspace_path as string;
   const stage = (args.current_stage as string) || (args.stage as string);
+  const client = typeof args.client === 'string' ? args.client.trim() : undefined;
 
   switch (action) {
     case 'next':
-      return remapNext(await handleLoopNext(stage, workspace), { tool: 'aza_loop', action: 'next' });
+      return remapNext(await handleLoopNext(stage, workspace, client), { tool: 'aza_loop', action: 'next' });
     case 'status':
-      return handleLoopStatus(workspace);
+      return handleLoopStatus(workspace, client);
     case 'complete':
-      return handleLoopComplete(stage, workspace);
+      return handleLoopComplete(stage, workspace, client);
     case 'stop':
-      return handleLoopStop((args.reason as string) || 'stopped', workspace);
+      return handleLoopStop((args.reason as string) || 'stopped', workspace, client);
     case 'set_condition':
-      return handleLoopSetCondition(args.key as string, args.passed as boolean, workspace);
+      return handleLoopSetCondition(args.key as string, args.passed as boolean, workspace, client);
     case 'reset_conditions':
-      return handleLoopResetConditions(workspace);
+      return handleLoopResetConditions(workspace, client);
     case 'stage_iterations':
-      return handleLoopGetStageIterations(stage, workspace);
+      return handleLoopGetStageIterations(stage, workspace, client);
     case 'circuit':
-      return handleLoopCircuitBreaker(workspace);
+      return handleLoopCircuitBreaker(workspace, client);
     case 'gate':
-      return handleLoopCompletionGate(workspace);
+      return handleLoopCompletionGate(workspace, client);
     case 'audit':
-      return handleLoopAudit(workspace);
+      return handleLoopAudit(workspace, client);
     case 'step':
     case 'full':
     case 'auto':
@@ -591,7 +594,7 @@ export async function handleAzaLoop(args: Record<string, unknown>): Promise<unkn
     case 'retry':
     case 'reset':
       return remapAutoLoop(
-        await handleAutoLoop(action, stage, workspace, args.tool_name as string),
+        await handleAutoLoop(action, stage, workspace, args.tool_name as string, client),
         workspace || process.cwd(),
       );
     // R9: 多任务批量执行——借鉴 ralphy --parallel + agency-orchestrator loop.max_iterations

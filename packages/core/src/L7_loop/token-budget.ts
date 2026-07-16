@@ -86,4 +86,32 @@ export class TokenBudget {
   getRemainingPerTask(): number {
     return Math.max(0, this.perTaskLimit - this.usage.perTask);
   }
+
+  /**
+   * R10 第5轮 (D5)：生成用量报告，供诊断与 BUDGET.md 输出。
+   *
+   * 返回 per-task / per-session 的已用、剩余、利用率，便于
+   * LoopController 在 syncStateToFile 时把预算状态写入 loop.md。
+   */
+  getUsageReport(): {
+    perTask: { used: number; limit: number; remaining: number; utilization: number };
+    perSession: { used: number; limit: number; remaining: number; utilization: number };
+    action: BudgetAction;
+  } {
+    return {
+      perTask: {
+        used: this.usage.perTask,
+        limit: this.perTaskLimit,
+        remaining: this.getRemainingPerTask(),
+        utilization: this.perTaskLimit > 0 ? this.usage.perTask / this.perTaskLimit : 0,
+      },
+      perSession: {
+        used: this.usage.perSession,
+        limit: this.perSessionLimit,
+        remaining: Math.max(0, this.perSessionLimit - this.usage.perSession),
+        utilization: this.perSessionLimit > 0 ? this.usage.perSession / this.perSessionLimit : 0,
+      },
+      action: this.checkBudget(),
+    };
+  }
 }
