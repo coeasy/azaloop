@@ -8,11 +8,15 @@
 
 ## 唯一工具面
 
-`aza_session` · `aza_prd` · `aza_loop` · `aza_spec` · `aza_quality` · `aza_finish` · `aza_memory` · `aza_meta`
+`aza_session` · `aza_prd` · `aza_loop` · `aza_auto` · `aza_spec` · `aza_quality` · `aza_finish` · `aza_memory` · `aza_meta`
 
 （`aza_auto_loop` / `aza_task_*` / `aza_context_*` 仅为 legacy 别名，禁止当作主指令。）
 
 ## 全自动脊柱
+
+**推荐：** `aza_auto(user_input=…)` → 跟随 `next_action` / `awaitingAction` → `aza_finish(ship)`
+
+**分步：**
 
 ```
 aza_prd(review[, auto_approve=true])
@@ -23,6 +27,8 @@ aza_prd(review[, auto_approve=true])
 ```
 
 无人值守：设置 `AZA_AUTO_APPROVE_PRD=true` 或 review 时传 `auto_approve=true`。
+
+> open 阶段必须暴露 `aza_loop`+`aza_auto`（2026-07-16 修复），否则全自动无法推进。
 
 ## MCP 配置
 

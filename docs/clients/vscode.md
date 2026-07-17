@@ -1,43 +1,26 @@
-# AzaLoop × VS Code (GitHub Copilot)
+# VSCode (Continue/Copilot) (`vscode`)
 
-**Tier:** T2 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ✅ (via rules)
+> Tier1: ⚪ experimental | Category: ide | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=vscode`
+
+## 安装步骤
+
+- VSCode + Continue 或 Copilot + mcpServers
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client vscode
+code --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP + 设置 | `.vscode/settings.json` |
-| 规则文件 | `.github/copilot-instructions.md` |
+- `aza_session`
+- `aza_loop`
 
-### 设置 `.vscode/settings.json`
+## 已知限制
 
-```json
-{
-  "mcp.enabled": true,
-  "mcp.servers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"]
-    }
-  },
-  "chat.mcpTools": true
-}
-```
-
-## 使用
-
-在 VS Code Chat (Ctrl+Shift+I) 中：
-```
-@azaloop 帮我添加用户登录功能
-```
-
-## Troubleshooting
-
-- 需要 VS Code 1.95+ 和 GitHub Copilot Chat
-- 在设置中搜索 `mcp` 确保已启用
+- 依赖扩展

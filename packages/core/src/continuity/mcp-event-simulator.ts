@@ -399,6 +399,22 @@ export class MCPEventSimulator {
   private getNextAction(): NextAction {
     const state = this.stateManager.getState();
     const stage = state.pipeline.current_stage;
+    const progress = String(state.loop.progress || '');
+    const stageStatus = (state.pipeline.stages as any)?.[stage]?.status;
+    const done =
+      progress === '100%' ||
+      progress === '100' ||
+      stageStatus === 'completed';
+
+    // Idle after successful archive — do not keep pushing ship
+    if (stage === 'archive' && done) {
+      return {
+        tool: 'aza_auto',
+        action: 'run',
+        reason: '上一轮已交付（archive@100%）。新需求请直接 aza_auto(user_input=...) — 短句如「全自动优化改进项目」也是有效需求。',
+      };
+    }
+
     // Once a story is active, always drive full-auto rather than re-open PRD generate
     if (state.loop.current_story && (stage === 'open' || stage === 'design' || stage === 'build')) {
       return {

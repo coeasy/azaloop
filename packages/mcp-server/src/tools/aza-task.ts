@@ -99,15 +99,27 @@ export async function handleTaskDesign(
   const azaDir = path.join(root, '.aza');
   try {
     fs.mkdirSync(azaDir, { recursive: true });
+    let taskEpoch = '';
+    try {
+      const epochPath = path.join(azaDir, 'task-epoch');
+      if (fs.existsSync(epochPath)) taskEpoch = fs.readFileSync(epochPath, 'utf8').trim();
+    } catch {
+      /* ignore */
+    }
     const designBody = [
       `# Design — ${title || storyId}`,
       '',
       `> Generated: ${new Date().toISOString()}`,
       `> Story: ${storyId}`,
+      ...(taskEpoch ? [`> task_epoch: ${taskEpoch}`, `> user_input_hash: ${taskEpoch}`] : []),
       '',
       '## Intent',
       '',
       description || title || 'Design for current story',
+      '',
+      '## Technical Approach',
+      '',
+      description || title || 'Implement the accepted design for this story with measurable acceptance checks.',
       '',
       '## Decisions',
       '',

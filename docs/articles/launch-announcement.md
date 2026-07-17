@@ -121,7 +121,7 @@ AzaLoop 不是绑定在某个特定工具上的。它通过 **MCP 协议**（Mod
 - Cursor、Claude Code、OpenCode、Trae
 
 **T2 部分支持**（规则驱动循环）：
-- VS Code + Copilot、Cline、Roo Code、Windsurf、Continue、Claude Desktop、GitHub Copilot、Gemini CLI、Codex CLI、Comate（百度）、Workbuddy（字节）、Qwen Code（阿里）
+- VS Code + Copilot、Cline、Roo Code、Windsurf、Continue、Claude Desktop、GitHub Copilot、Gemini CLI、Codex CLI、Comate（百度）、WorkBuddy（腾讯）、Qwen Code（阿里）
 
 **T3 基础支持**：
 - Aider、Zed、Goose、Hermes、OpenClaw、Kiro、Codeium、Droid、OpenHands
@@ -253,7 +253,7 @@ curl -fsSL https://github.com/coeasy/azaloop/releases/latest/download/azaloop-po
 
 25+ 个 AI 编码助手，覆盖全球主流工具：
 
-Cursor、Claude Code、OpenCode、Trae、VS Code + Copilot、Cline、Roo Code、Windsurf、Continue、Claude Desktop、GitHub Copilot、Gemini CLI、Codex CLI、Comate（百度）、Workbuddy（字节）、Qwen Code（阿里）、Aider、Zed、Goose、Hermes、OpenClaw、Kiro、Codeium、Droid、OpenHands
+Cursor、Claude Code、OpenCode、Trae、VS Code + Copilot、Cline、Roo Code、Windsurf、Continue、Claude Desktop、GitHub Copilot、Gemini CLI、Codex CLI、Comate（百度）、WorkBuddy（腾讯）、Qwen Code（阿里）、Aider、Zed、Goose、Hermes、OpenClaw、Kiro、Codeium、Droid、OpenHands
 
 ---
 

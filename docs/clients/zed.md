@@ -1,37 +1,26 @@
-# AzaLoop × Zed
+# Zed (`zed`)
 
-**Tier:** T3 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ❌ (manual)
+> Tier1: ⚪ experimental | Category: ide | Since: 0.1.1
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=zed`
+
+## 安装步骤
+
+- Zed + extension + mcp 配置
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client zed
+zed --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.zed/mcp.json` |
+- `aza_session`
+- `aza_loop`
 
-### MCP 配置 `.zed/mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"]
-    }
-  }
-}
-```
-
-## 使用
-
-Zed 支持 MCP 协议，重启后工具自动可用。
-
-## Troubleshooting
-
-- Zed 的 MCP 配置在项目级 `.zed/mcp.json`
-- 在 Zed 设置中也可配置全局 MCP
+- MCP 实验阶段

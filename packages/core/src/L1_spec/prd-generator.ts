@@ -359,15 +359,17 @@ export class PRDGenerator {
   }
 
   private mergeCompetitiveGoals(goals: string[], competitiveGoals: string[]): string[] {
-    const merged = [...goals];
+    const merged = goals.filter((g) => !this.isCompetitiveUrlNoise(g));
     for (const g of competitiveGoals) {
       if (merged.length >= 4) break;
+      if (this.isCompetitiveUrlNoise(g)) continue;
       if (!merged.some((x) => x.toLowerCase() === g.toLowerCase())) merged.push(g);
     }
     if (!merged.some((g) => /differentiat|MCP|Host-LLM|absorb competitive|竞品/i.test(g))) {
-      merged.push(competitiveGoals[0] || 'Absorb competitive gaps without expanding MCP tool count');
+      const seed = competitiveGoals.find((g) => !this.isCompetitiveUrlNoise(g));
+      merged.push(seed || 'Absorb competitive gaps without expanding MCP tool count');
     }
-    return merged.slice(0, 5);
+    return merged.filter((g) => !this.isCompetitiveUrlNoise(g)).slice(0, 5);
   }
 
   /**
@@ -917,6 +919,16 @@ export class PRDGenerator {
     return users;
   }
 
+  /** True when text is mostly a URL / GitHub ref — must not become FR/story titles. */
+  private isCompetitiveUrlNoise(text: string): boolean {
+    const t = text.trim();
+    if (/^https?:\/\//i.test(t)) return true;
+    if (/^\[.+\]\(https?:\/\//i.test(t)) return true;
+    if (/github\.com\/[\w.-]+\/[\w.-]+/i.test(t) && t.length < 160) return true;
+    if (/^Competitive refs?:/i.test(t)) return true;
+    return false;
+  }
+
   private extractNumberedItems(description: string): string[] {
     const items: string[] = [];
     for (const raw of description.split('\n')) {
@@ -927,6 +939,8 @@ export class PRDGenerator {
       if (text.length < 6) continue;
       // Skip UI chrome that sometimes leaks into descriptions
       if (/确认后输入|开始执行|质量评分|用户故事：/.test(text)) continue;
+      // Skip competitive URL bullets injected into overview (full-auto PRD pollution)
+      if (this.isCompetitiveUrlNoise(text)) continue;
       items.push(text);
     }
     return items;
@@ -998,7 +1012,10 @@ export class PRDGenerator {
       (goals && goals.length > 0 ? goals : undefined) ||
       this.extractNumberedItems(description);
 
-    const sources = (seeds.length > 0 ? seeds : [`Deliver ${title} with measurable gates`]).slice(0, maxByComplexity);
+    const filteredSeeds = seeds.filter((s) => !this.isCompetitiveUrlNoise(s));
+    const sources = (
+      filteredSeeds.length > 0 ? filteredSeeds : [`Deliver ${title} with measurable gates`]
+    ).slice(0, maxByComplexity);
     const stories: Story[] = [];
 
     for (let i = 0; i < sources.length; i++) {

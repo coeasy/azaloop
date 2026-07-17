@@ -1,39 +1,28 @@
-# AzaLoop × Comate (百度)
+# Comate (百度文心) (`comate`)
 
-**Tier:** T2 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ✅ (via rules)
+> Tier1: ⚪ experimental | Category: ide | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=comate`
+
+## 安装步骤
+
+- VSCode/IntelliJ 安装 Comate 扩展
+- 启用 MCP 模式
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client comate
+comate --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.comate/mcp.json` |
-| 规则文件 | `.comate/rules.md` |
+- `aza_session`
+- `aza_loop`
 
-### MCP 配置 `.comate/mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-Comate 支持 MCP 协议和 skills 系统，自动跟踪循环。
-
-## Troubleshooting
-
-- 百度 Comate 的 MCP 配置在项目级 `.comate/` 目录
-- 支持规则文件自动注入
+- 国内 LLM 接入
+- MCP 适配需 ≥ 3.2

@@ -1,58 +1,32 @@
-# AzaLoop × OpenCode
+# OpenCode (`opencode`)
 
-**Tier:** T1 Full | **MCP:** ✅ | **Hooks:** ✅ | **Auto-Loop:** ✅
+> Tier1: ✅ | Category: cli | Since: 0.1.0
 
-## 快速开始（Quick Start）
+## 环境变量
+
+- `AZA_CLIENT_NAME=opencode`
+- `AZA_CLIENT_VERSION`
+
+## 安装步骤
+
+- 1. 编译 opencode (github.com/sst/opencode)
+- 2. 配置 ~/.opencode/config.yaml 加入 aza mcp serve
+- 3. 命令: opencode --mcp-server aza
+
+## 启动命令
 
 ```bash
-# 一行命令初始化
-npx @azaloop/cli init --client opencode
-
-# 或在项目目录中自动检测
-npx @azaloop/cli init
+opencode --mcp-server "aza mcp serve"
 ```
 
-## 配置（Configuration）
+## 推荐工具
 
-自动生成文件：
+- `aza_session`
+- `aza_prd`
+- `aza_auto`
+- `aza_loop`
+- `aza_meta`
 
-| 文件 | 位置 | 作用 |
-|------|------|------|
-| MCP 配置 | `.opencode/mcp.json` | 连接 AzaLoop MCP 服务器 |
-| 规则文件 | `.opencode/rules.md` | 会话启动规则 |
-| 续跑文件 | `.opencode/continue.md` | 自动续跑流程 |
+## 已知限制
 
-### 手动配置
-
-如果 `aza init` 不可用，手动创建 `.opencode/mcp.json`：
-
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "node",
-      "args": ["packages/mcp-server/dist/server.js"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用（Usage）
-
-在 OpenCode 聊天中输入：
-
-```
-用户: 帮我创建一个 React 待办事项应用
-```
-
-AI 助手将自动执行：
-1. `aza_session_start` — 初始化系统
-2. `aza_prd_generate` — 生成 PRD
-3. 五阶段全自动循环 → 完成交付
-
-## Troubleshooting
-
-- **MCP 连接失败**：检查 `.opencode/mcp.json` 中的 `command` 路径是否正确
-- **工具未找到**：运行 `pnpm build` 确保服务器已编译
-- **Workspace 模式**：确保从 monorepo 根目录运行 OpenCode
+- CLI 模式需要更多手动控制

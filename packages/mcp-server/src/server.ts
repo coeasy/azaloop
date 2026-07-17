@@ -14,7 +14,21 @@
 import { createInterface } from 'readline';
 import { stdin, stdout, stderr } from 'process';
 import { handleToolCall, getToolDefinitions } from './index';
-import { StageWriteGuardError } from '@azaloop/core';
+import { StageWriteGuardError, assertShellwardPreTool } from '@azaloop/core';
+
+/** Embedded stamp so health reflects this binary even if Cursor env is stale. */
+const EMBEDDED_BUILD_STAMP = '2026-07-16-hard-continue-autopick-v1';
+if (
+  !process.env.AZA_BUILD_STAMP ||
+  process.env.AZA_BUILD_STAMP === '2026-07-16-full-auto-spine-fix' ||
+  process.env.AZA_BUILD_STAMP === '2026-07-16-full-auto-host-chain-v4' ||
+  process.env.AZA_BUILD_STAMP === '2026-07-16-full-auto-l3-inline-v5' ||
+  process.env.AZA_BUILD_STAMP === '2026-07-16-full-auto-l3-inline-v6' ||
+  process.env.AZA_BUILD_STAMP === '2026-07-16-backlog-clear-v1' ||
+  process.env.AZA_BUILD_STAMP === '2026-07-16-hard-continue-v1'
+) {
+  process.env.AZA_BUILD_STAMP = EMBEDDED_BUILD_STAMP;
+}
 
 interface JSONRPCRequest {
   jsonrpc?: string;
@@ -93,6 +107,35 @@ async function handleRequest(req: JSONRPCRequest): Promise<JSONRPCResponse> {
         id,
         error: { code: -32600, message: 'Missing tool name' },
       };
+    }
+
+    // P0 竞品超越 (shellward 对齐)：tools/call 默认 DLP pre-tool 扫描
+    // 危险 payload（secret/data_exfil/mcp_poisoning/critical severity）直接拒收。
+    // Escape hatch: AZA_SKIP_SHELLWARD=1 仅用于调试。
+    if (process.env.AZA_SKIP_SHELLWARD !== '1' && process.env.AZA_SKIP_SHELLWARD !== 'true') {
+      try {
+        assertShellwardPreTool(name, argumentsObj);
+      } catch (swErr: any) {
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: `shellward DLP blocked: ${swErr?.message || 'unknown'}`,
+                next_action: {
+                  tool: 'aza_security',
+                  action: 'review',
+                  reason: 'Payload triggered DLP pre-tool guard — review secrets/exfil/poisoning before re-calling',
+                },
+              }, null, 2),
+            }],
+            isError: true,
+          },
+        };
+      }
     }
 
     try {

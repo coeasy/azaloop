@@ -1,39 +1,28 @@
-# AzaLoop × Hermes
+# Hermes (Nous Research) (`hermes`)
 
-**Tier:** T3 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ❌ (manual trigger)
+> Tier1: ⚪ experimental | Category: cli | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=hermes`
+- `NOUS_API_KEY`
+
+## 安装步骤
+
+- pip install hermes-agent
+- 配置 ~/.hermes/mcp.json
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client hermes
+hermes --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.hermes/mcp.json` |
-| Rules (skill) | `.hermes/skills/aza-loop.md` |
+- `aza_session`
+- `aza_loop`
 
-### MCP 配置 `.hermes/mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-Hermes 的 skill 系统帮助加载 AzaLoop 使用规则。循环需手动触发。
-
-## Troubleshooting
-
-- Hermes 使用 skill-based 规则加载
-- 无自动 next_action 跟踪
+- CLI 模式

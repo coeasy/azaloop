@@ -1,4 +1,5 @@
 packages:
   - 'packages/*'
+enableGlobalVirtualStore: false
 allowBuilds:
   esbuild: true

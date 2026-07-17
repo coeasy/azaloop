@@ -112,6 +112,8 @@ export interface VectorStore {
   search(query: string, k?: number): Array<SearchResult & { text?: string }>;
   size(): number;
   persist(): void;
+  /** R10 第11轮 (P4 可观测性)：NSW 索引指标 */
+  stats?(): { size: number; insertCount: number; searchCount: number; avgHitRate: number; bruteForce: boolean; dimensions: number; M: number };
 }
 
 /**
@@ -169,6 +171,18 @@ export function openVectorStore(azaDir: string, dimensions = 32): VectorStore {
     },
     size(): number {
       return index.size();
+    },
+    stats(): { size: number; insertCount: number; searchCount: number; avgHitRate: number; bruteForce: boolean; dimensions: number; M: number } {
+      const s = index.stats();
+      return {
+        size: s.size,
+        insertCount: s.insertCount,
+        searchCount: s.searchCount,
+        avgHitRate: s.avgHitRate,
+        bruteForce: s.bruteForce,
+        dimensions: s.dimensions,
+        M: s.M,
+      };
     },
     persist,
   };

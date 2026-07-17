@@ -48,6 +48,10 @@ export class ConfigLoader {
         episodic_max: 100,
         compression_threshold: 50,
       },
+      autonomy: {
+        level: 'L2',
+        auto_approve_prd: false,
+      },
       quality: {
         gates: {
           lint: true,

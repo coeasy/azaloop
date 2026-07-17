@@ -116,7 +116,7 @@ All MCP clients use a similar JSON format:
 | Gemini CLI | `.gemini/mcp.json` | `rules.md` | ✅ |
 | Codex CLI | `mcp.json` | `AGENTS.md` | ✅ |
 | Comate | `.comate/mcp.json` | `rules.md` | ✅ |
-| Workbuddy | `.workbuddy/mcp.json` | `rules.md` | ✅ |
+| WorkBuddy | `.workbuddy/mcp.json` | `rules.md` | ✅ |
 | Qwen Code | `.qwen/mcp.json` | `rules.md` | ✅ |
 | Zed | `.zed/mcp.json` | — | ❌ |
 | Aider | — | `CONVENTIONS.md` | ❌ |

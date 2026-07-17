@@ -8,6 +8,14 @@
 
 AzaLoop is an **MCP server** that drives a full-auto development cycle. Install any of 25+ supported AI coding assistants, run **one command**, and your AI gains the ability to autonomously plan, code, test, and deliver software.
 
+## Differentiation
+
+- **PRD auto Competitive Research** — GitHub similar-repo search injected into PRD (`## Competitive Research`). Unique vs OpenSpec / Superpowers / ralphy / spec-kit.
+- **Thin MCP surface (≤9 tools)** — Spec → Loop → Quality → Ship without tool sprawl.
+- **Cross-client resume** — `.aza/` STATE + RESUME + `next_action` chain.
+- **No-extra-input cooperative full-auto** — `aza_auto` chooses the plan and pauses only when the host coding assistant must implement; the host runs `next_action` → `report_tool` until `aza_finish(ship)` without asking the user again.
+- **L3 inline** — design, quality, and shipping run inline; only implementation is delegated to the host coding assistant.
+
 ## One-Command Setup
 
 ```bash
@@ -62,7 +70,7 @@ npm install @azaloop/mcp-server
 | Tier | Clients | Auto-Loop |
 |------|---------|-----------|
 | **T1 Full** | Cursor, Claude Code, OpenCode, Trae | ✅ Full auto |
-| **T2 Partial** | VS Code, Cline, Roo Code, Windsurf, Continue, Gemini CLI, Codex CLI, Comate, Workbuddy, Qwen Code, GitHub Copilot, Claude Desktop | ✅/Partial |
+| **T2 Partial** | VS Code, Cline, Roo Code, Windsurf, Continue, Gemini CLI, Codex CLI, Comate, WorkBuddy, Qwen Code, GitHub Copilot, Claude Desktop | ✅/Partial |
 | **T3 Minimal** | Aider, Zed, Goose, Hermes, OpenClaw, Kiro, Codeium, Droid, OpenHands | ❌ Manual |
 
 See [docs/clients/](docs/clients/) for per-client guides and [docs/CLIENT-INSTALLATION.md](docs/CLIENT-INSTALLATION.md) for full Chinese documentation.
@@ -98,12 +106,10 @@ See [docs/clients/](docs/clients/) for per-client guides and [docs/CLIENT-INSTAL
 ## Development
 
 ```bash
-git clone https://github.com/your-org/azaloop.git
+git clone https://github.com/coeasy/azaloop.git
 cd azaloop
 pnpm install
-pnpm build
-pnpm test
-pnpm typecheck
+pnpm check
 ```
 
 ## Project Structure

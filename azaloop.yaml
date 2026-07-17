@@ -1,5 +1,5 @@
-# AzaLoop 0.1.0 Configuration
-version: "0.1.0"
+# AzaLoop 0.1.1 Configuration
+version: "0.1.1"
 
 project:
   name: azaloop
@@ -15,6 +15,13 @@ loop:
   hard_stop_on_security: true
   # 外层循环（按 PRD 故事批量推进 board）：当前客户端开启全自动需置 true
   outer_enabled: true
+  # 全自动脊柱：open 阶段也必须能调 aza_loop / aza_auto（见 STAGE_TOOL_GROUPS）
+  full_auto: true
+
+# 无人值守：与 MCP env AZA_AUTO_APPROVE_PRD=true 对齐
+autonomy:
+  level: L3
+  auto_approve_prd: true
 
 memory:
   enabled: true

@@ -1,40 +1,29 @@
-# AzaLoop × Claude Desktop
+# Claude Desktop (`claude-desktop`)
 
-**Tier:** T2 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ❌ (manual trigger)
+> Tier1: ⚪ experimental | Category: desktop | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=claude-desktop`
+- `ANTHROPIC_API_KEY`
+
+## 安装步骤
+
+- 安装 Claude Desktop (claude.com/download)
+- 编辑 claude_desktop_config.json 加入 mcpServers
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client claude-desktop
+claude-desktop --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `claude_desktop_config.json` (项目根目录) |
+- `aza_session`
+- `aza_auto`
+- `aza_loop`
 
-> **注意**：Claude Desktop 通常使用全局配置而非项目级配置。`aza init` 生成项目级配置文件供参考。
+## 已知限制
 
-### MCP 配置 `claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-在 Claude Desktop 中，AzaLoop 工具自动可用。手动触发循环步骤。
-
-## Troubleshooting
-
-- Claude Desktop 全局配置通常在 `~/Library/Application Support/Claude/`
-- 工具调用需要用户确认
+- 仅 macOS/Windows

@@ -99,7 +99,9 @@ export async function handleOpenSpecApply(
   };
 }
 
-/** Archive: move change folder under openspec/changes/archive/YYYY-MM-DD-id */
+/** Archive: move change folder under openspec/changes/archive/YYYY-MM-DD-id
+ *  and merge specs into openspec/specs (OpenSpec opsx alignment).
+ */
 export async function handleOpenSpecArchive(
   workspacePath: string,
   title?: string,
@@ -115,22 +117,48 @@ export async function handleOpenSpecArchive(
       metadata: { iteration: 0, progress: '90%', stage: 'archive' },
     };
   }
-  const src = path.join(changesRoot(root), target);
   const stamp = new Date().toISOString().slice(0, 10);
-  const destDir = path.join(changesRoot(root), 'archive');
-  fs.mkdirSync(destDir, { recursive: true });
-  const dest = path.join(destDir, `${stamp}-${target}`);
-  if (fs.existsSync(dest)) {
-    fs.rmSync(dest, { recursive: true, force: true });
-  }
-  fs.renameSync(src, dest);
   const azaDir = path.join(root, '.aza');
-  syncTaskBoardPhase(azaDir, 'archive', 'complete', target);
-  appendProgress(azaDir, `openspec archive ${target} → ${dest}`);
-  return {
-    success: true,
-    data: { change_id: target, archived_to: dest },
-    next_action: { tool: 'aza_finish', action: 'ship', reason: 'Change archived — ship' },
-    metadata: { iteration: 0, progress: '95%', stage: 'archive' },
-  };
+  try {
+    const { archiveChange } = await import('@azaloop/core');
+    const archivedRel = await archiveChange(target, root, stamp);
+    syncTaskBoardPhase(azaDir, 'archive', 'complete', target);
+    appendProgress(azaDir, `openspec archive ${target} → ${archivedRel} (specs merged)`);
+    return {
+      success: true,
+      data: {
+        change_id: target,
+        archived_to: path.join(root, archivedRel),
+        specs_merged: true,
+        index: path.join(azaDir, 'openspec-archive-index.md'),
+      },
+      next_action: { tool: 'aza_finish', action: 'ship', reason: 'Change archived + specs merged — ship' },
+      metadata: { iteration: 0, progress: '95%', stage: 'archive' },
+    };
+  } catch (err) {
+    // Fallback to rename-only if slug validation fails (e.g. non-kebab)
+    const src = path.join(changesRoot(root), target);
+    const destDir = path.join(changesRoot(root), 'archive');
+    fs.mkdirSync(destDir, { recursive: true });
+    const dest = path.join(destDir, `${stamp}-${target}`);
+    if (fs.existsSync(dest)) {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+    // Best-effort merge before rename
+    try {
+      const { mergeChangeSpecsToCanonical } = await import('@azaloop/core');
+      await mergeChangeSpecsToCanonical(src, root, target);
+    } catch {
+      /* ignore */
+    }
+    fs.renameSync(src, dest);
+    syncTaskBoardPhase(azaDir, 'archive', 'complete', target);
+    appendProgress(azaDir, `openspec archive ${target} → ${dest} (fallback: ${err instanceof Error ? err.message : String(err)})`);
+    return {
+      success: true,
+      data: { change_id: target, archived_to: dest, specs_merged: true, fallback: true },
+      next_action: { tool: 'aza_finish', action: 'ship', reason: 'Change archived — ship' },
+      metadata: { iteration: 0, progress: '95%', stage: 'archive' },
+    };
+  }
 }

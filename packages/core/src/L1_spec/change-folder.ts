@@ -108,12 +108,20 @@ function buildProposal(input: ChangeInput): string {
   const risks = input.risks ?? [];
   const contractPath = input.contract?.path ?? (input.contract ? '.aza/contract.md' : undefined);
 
-  const body = `# Change: ${input.slug}
+  const contractSection = contractPath
+    ? `## Contract
+
+Contract: \`${contractPath}\` (source of truth for intent lock / task batches — do not duplicate here)
+
+`
+    : '';
+
+  return `# Change: ${input.slug}
 
 > Capability: \`${input.capability}\` · Date: ${date} · Author: ${author}
 > Intent: ${input.intent}
 
-## Why
+${contractSection}## Why
 
 ${input.why ?? input.intent}
 
@@ -134,13 +142,6 @@ ${nonGoals.length === 0 ? '_None specified._' : nonGoals.map((g) => `- ${g}`).jo
 ## Risks
 
 ${risks.length === 0 ? '_None specified._' : risks.map((r) => `- ${r}`).join('\n')}
-`;
-
-  if (!contractPath) return body;
-  return `${body}
-## Contract
-
-Contract: \`${contractPath}\` (source of truth for intent lock / task batches — do not duplicate here)
 `;
 }
 
@@ -356,6 +357,7 @@ export async function writeChangeFolder(
 
 /**
  * Archive a change to `openspec/changes/archive/YYYY-MM-DD-<slug>/`.
+ * Also merges any `specs/` under the change into canonical `openspec/specs/`.
  */
 export async function archiveChange(
   slug: string,
@@ -376,9 +378,91 @@ export async function archiveChange(
     throw new Error(`archiveChange: source change not found at ${source}`);
   }
 
+  // Merge change-local specs into canonical openspec/specs before moving
+  await mergeChangeSpecsToCanonical(source, baseDir, slug);
+
+  // Distill into `.aza/stores` before rename (source still readable)
+  const azaDir = path.join(baseDir, '.aza');
+  try {
+    const { distillChangeToStore } = await import('../L9_knowledge/spec-distill');
+    distillChangeToStore(azaDir, source, slug);
+  } catch {
+    /* best-effort distill */
+  }
+
   await fs.promises.mkdir(path.dirname(target), { recursive: true });
   await fs.promises.rename(source, target);
+
+  // Index note for .aza
+  try {
+    await fs.promises.mkdir(azaDir, { recursive: true });
+    const indexPath = path.join(azaDir, 'openspec-archive-index.md');
+    const line = `- ${date} \`${slug}\` → \`${path.relative(baseDir, target).replace(/\\/g, '/')}\`\n`;
+    await fs.promises.appendFile(indexPath, line, 'utf8');
+  } catch {
+    /* best-effort index */
+  }
+
   return path.relative(baseDir, target);
+}
+
+/**
+ * Copy `openspec/changes/<slug>/specs/**` into `openspec/specs/**`.
+ * Creates capability folders as needed; overwrites matching spec.md with change version.
+ */
+export async function mergeChangeSpecsToCanonical(
+  changeDir: string,
+  baseDir: string,
+  slug: string,
+): Promise<{ merged: string[]; skipped: string[] }> {
+  const merged: string[] = [];
+  const skipped: string[] = [];
+  const changeSpecs = path.join(changeDir, 'specs');
+  const canonical = path.join(baseDir, 'openspec', 'specs');
+
+  if (!fs.existsSync(changeSpecs)) {
+    // Synthesize a minimal capability stub from proposal/tasks if no specs/
+    const stubCap = slug.replace(/[^a-z0-9-]/gi, '-').toLowerCase() || 'change';
+    const stubDir = path.join(canonical, stubCap);
+    await fs.promises.mkdir(stubDir, { recursive: true });
+    const stubFile = path.join(stubDir, 'spec.md');
+    if (!fs.existsSync(stubFile)) {
+      const proposal = path.join(changeDir, 'proposal.md');
+      const body = fs.existsSync(proposal)
+        ? fs.readFileSync(proposal, 'utf8').slice(0, 4000)
+        : `# Spec: ${slug}\n\nArchived from change \`${slug}\`.\n`;
+      await fs.promises.writeFile(
+        stubFile,
+        `# Spec: ${stubCap}\n\n> Merged from change \`${slug}\` on archive.\n\n${body}\n`,
+        'utf8',
+      );
+      merged.push(path.relative(baseDir, stubFile));
+    } else {
+      skipped.push(path.relative(baseDir, stubFile));
+    }
+    return { merged, skipped };
+  }
+
+  const walk = async (dir: string, rel = ''): Promise<void> => {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    for (const e of entries) {
+      const from = path.join(dir, e.name);
+      const relPath = rel ? `${rel}/${e.name}` : e.name;
+      const to = path.join(canonical, relPath);
+      if (e.isDirectory()) {
+        await fs.promises.mkdir(to, { recursive: true });
+        await walk(from, relPath);
+      } else if (e.isFile()) {
+        await fs.promises.mkdir(path.dirname(to), { recursive: true });
+        await fs.promises.copyFile(from, to);
+        merged.push(path.relative(baseDir, to));
+      }
+    }
+  };
+
+  await fs.promises.mkdir(canonical, { recursive: true });
+  await walk(changeSpecs);
+  return { merged, skipped };
 }
 
 /**

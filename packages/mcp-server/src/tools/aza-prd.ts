@@ -1,11 +1,20 @@
-import { PRDGenerator, PRDReviewGate, runCompetitiveResearch, writePrdMarkdown } from '@azaloop/core';
-import type { PRDGenerationInput, StateManager, ResumeGenerator } from '@azaloop/core';
+/**
+ * aza_prd — PRD generate / validate / review / approve / modify / cancel / draft / multi-review / refine.
+ *
+ * R12 P6 Plus10 (P1 主链路拆分第10轮) — 把 7 个 gate-based handler 的重复
+ * try/catch + metadata 模板抽到 withPRDGate() 包装器（prd-gate-factory.ts）。
+ * 主文件每个 handler 退化为 1-2 行委托，减少约 80% 模板代码。
+ */
+import { PRDGenerator, type StateManager, type ResumeGenerator } from '@azaloop/core';
+import type { PRDGenerationInput } from '@azaloop/core';
 import type { LoopResponse } from '@azaloop/shared';
 import * as path from 'path';
+import { withPRDGate } from './prd-gate-factory';
+import { PRDReviewGate, runCompetitiveResearch, writePrdMarkdown } from '@azaloop/core';
 
+// ── C5: PRD Generator + Review Gate singletons ──
 const prdGenerator = new PRDGenerator();
 
-// ── C5: PRD Review Gate singleton ──
 let prdReviewGate: PRDReviewGate | null = null;
 
 function getPRDReviewGate(stateManager: StateManager, resumeGenerator: ResumeGenerator): PRDReviewGate {
@@ -15,13 +24,15 @@ function getPRDReviewGate(stateManager: StateManager, resumeGenerator: ResumeGen
   return prdReviewGate;
 }
 
+// ── Standalone handlers (no gate) ──
+
+/**
+ * aza_prd(generate) — 生成 PRD 并落盘。
+ */
 export async function handlePRDGenerate(input: PRDGenerationInput, workspacePath?: string): Promise<LoopResponse> {
   try {
     const prd = prdGenerator.generate(input);
     const validated = prdGenerator.validate(prd);
-    // DEFAULT + VISIBLE competitive research — the `generate` action must not
-    // bypass the live GitHub search that `review` performs. Persist the PRD
-    // (with the dedicated Competitive Research section) into the project .aza/.
     const azaDir = path.join(workspacePath || process.cwd(), '.aza');
     try {
       const comp = await runCompetitiveResearch(azaDir, input.title, input.description || input.title, {
@@ -33,7 +44,7 @@ export async function handlePRDGenerate(input: PRDGenerationInput, workspacePath
         writePrdMarkdown(azaDir, validated);
       }
     } catch {
-      /* best-effort — PRD still returns even if artifact write fails */
+      /* best-effort */
     }
     return {
       success: true,
@@ -51,6 +62,9 @@ export async function handlePRDGenerate(input: PRDGenerationInput, workspacePath
   }
 }
 
+/**
+ * aza_prd(validate) — 校验已有 PRD。
+ */
 export async function handlePRDValidate(prd: unknown): Promise<LoopResponse> {
   try {
     const validated = prdGenerator.validate(prd);
@@ -70,11 +84,10 @@ export async function handlePRDValidate(prd: unknown): Promise<LoopResponse> {
   }
 }
 
-// ── C5: PRD 先行展示工作流 ──────────────────────────────────────────
+// ── Gate-based handlers (use withPRDGate factory) ──
 
 /**
- * aza_prd_review — 用户提交需求后的第一步
- * 借鉴 Cursor plan mode + Qoder Quest：先生成 PRD 展示给用户，确认后再执行
+ * aza_prd(review) — 用户提交需求后的第一步，生成 PRD 展示给用户。
  */
 export async function handlePrdReview(
   userInput: {
@@ -87,18 +100,19 @@ export async function handlePrdReview(
   stateManager: StateManager,
   resumeGenerator: ResumeGenerator,
 ): Promise<LoopResponse> {
-  try {
-    const gate = getPRDReviewGate(stateManager, resumeGenerator);
-    // Default OpenSpec scaffold on approve (spine S2). Pass source:'openspec' unless explicitly disabled.
-    const useOpenspec = userInput.openspec !== false && userInput.source !== 'aza-prd';
-    const result = await gate.review({
+  const useOpenspec = userInput.openspec !== false && userInput.source !== 'aza-prd';
+  return withPRDGate(stateManager, resumeGenerator, getPRDReviewGate, {
+    gateMethod: 'review',
+    gateArgs: [{
       title: userInput.title,
       description: userInput.description,
       source: useOpenspec ? 'openspec' : 'aza-prd',
       workspace_path: userInput.workspace_path,
-    });
-    // Compact payload for hosts — full PRD already on disk under .aza/
-    const compact = {
+    }],
+    metadata: { successProgress: '5%', failureProgress: '0%', stage: 'open' },
+    isSuccess: () => true,
+    nextAction: () => ({ tool: 'aza_prd', action: 'wait', reason: 'PRD generated, waiting for user approval (set auto_approve=true for unattended Cursor runs)' }),
+    dataTransform: (result) => ({
       prd_id: result.prd_id,
       title: result.title,
       complexity: result.complexity,
@@ -110,111 +124,58 @@ export async function handlePrdReview(
       artifacts: ['.aza/prd.md', '.aza/prd.json', '.aza/competitive-research.md'],
       summary_digest: String(result.summary || '').slice(0, 800),
       competitive: result.competitive,
-    };
-    return {
-      success: true,
-      data: compact,
-      next_action: {
-        tool: 'aza_prd',
-        action: 'wait',
-        reason: 'PRD generated, waiting for user approval (set auto_approve=true for unattended Cursor runs)',
-      },
-      metadata: { iteration: 0, progress: '5%', stage: 'open' },
-    };
-  } catch (err: any) {
-    return {
-      success: false,
-      data: null,
-      error: err.message,
-      metadata: { iteration: 0, progress: '0%', stage: 'open' },
-    };
-  }
+    }),
+  });
 }
 
 /**
- * aza_prd_approve — 用户确认 PRD，进入正式执行
+ * aza_prd(approve) — 用户确认 PRD，进入正式执行。
  */
 export async function handlePrdApprove(
   answers: Record<string, string> | undefined,
   stateManager: StateManager,
   resumeGenerator: ResumeGenerator,
 ): Promise<LoopResponse> {
-  try {
-    const gate = getPRDReviewGate(stateManager, resumeGenerator);
-    const result = await gate.approve(answers);
-    return {
-      success: result.approved,
-      data: result,
-      next_action: result.next_action,
-      metadata: { iteration: 0, progress: '10%', stage: 'open' },
-    };
-  } catch (err: any) {
-    return {
-      success: false,
-      data: null,
-      error: err.message,
-      metadata: { iteration: 0, progress: '5%', stage: 'open' },
-    };
-  }
+  return withPRDGate(stateManager, resumeGenerator, getPRDReviewGate, {
+    gateMethod: 'approve',
+    gateArgs: [answers],
+    metadata: { successProgress: '10%', failureProgress: '5%', stage: 'open' },
+  });
 }
 
 /**
- * aza_prd_modify — 用户提出修改意见，PRD 更新后重新展示
+ * aza_prd(modify) — 用户提出修改意见，PRD 更新后重新展示。
  */
 export async function handlePrdModify(
   feedback: string,
   stateManager: StateManager,
   resumeGenerator: ResumeGenerator,
 ): Promise<LoopResponse> {
-  try {
-    const gate = getPRDReviewGate(stateManager, resumeGenerator);
-    const result = await gate.modify(feedback);
-    return {
-      success: true,
-      data: result,
-      next_action: { tool: 'aza_prd_approve', action: 'wait', reason: 'PRD modified, waiting for user approval' },
-      metadata: { iteration: 0, progress: '5%', stage: 'open' },
-    };
-  } catch (err: any) {
-    return {
-      success: false,
-      data: null,
-      error: err.message,
-      metadata: { iteration: 0, progress: '0%', stage: 'open' },
-    };
-  }
+  return withPRDGate(stateManager, resumeGenerator, getPRDReviewGate, {
+    gateMethod: 'modify',
+    gateArgs: [feedback],
+    metadata: { successProgress: '5%', failureProgress: '0%', stage: 'open' },
+    nextAction: () => ({ tool: 'aza_prd_approve', action: 'wait', reason: 'PRD modified, waiting for user approval' }),
+  });
 }
 
 /**
- * aza_prd_cancel — 用户取消当前 PRD
+ * aza_prd(cancel) — 用户取消当前 PRD。
  */
 export async function handlePrdCancel(
   stateManager: StateManager,
   resumeGenerator: ResumeGenerator,
 ): Promise<LoopResponse> {
-  try {
-    const gate = getPRDReviewGate(stateManager, resumeGenerator);
-    const result = await gate.cancel();
-    return {
-      success: true,
-      data: { cancelled: result.cancelled },
-      next_action: result.next_action,
-      metadata: { iteration: 0, progress: '0%', stage: 'open' },
-    };
-  } catch (err: any) {
-    return {
-      success: false,
-      data: null,
-      error: err.message,
-      metadata: { iteration: 0, progress: '0%', stage: 'open' },
-    };
-  }
+  return withPRDGate(stateManager, resumeGenerator, getPRDReviewGate, {
+    gateMethod: 'cancel',
+    gateArgs: [],
+    metadata: { successProgress: '0%', failureProgress: '0%', stage: 'open' },
+    dataTransform: (result) => ({ cancelled: result.cancelled }),
+  });
 }
 
-// ── V20 Task 1.5: multi-step LLM interaction handlers ──
-
 /**
- * aza_prd_draft — V20 多步生成第 1 步：生成草稿 prompt 给宿主 LLM
+ * aza_prd_draft — V20 多步生成第 1 步：生成草稿 prompt 给宿主 LLM。
  */
 export async function handlePrdDraft(
   args: {
@@ -227,59 +188,37 @@ export async function handlePrdDraft(
   stateManager: StateManager,
   resumeGenerator: ResumeGenerator,
 ): Promise<LoopResponse> {
-  try {
-    const gate = getPRDReviewGate(stateManager, resumeGenerator);
-    const result = await gate.draft({
+  return withPRDGate(stateManager, resumeGenerator, getPRDReviewGate, {
+    gateMethod: 'draft',
+    gateArgs: [{
       title: args.title,
       description: args.description || args.user_input || args.title,
       workspace_path: args.workspace_path,
       complexity: args.complexity as any,
-    });
-    return {
-      success: true,
-      data: result,
-      next_action: result.next_action,
-      metadata: { iteration: 0, progress: '3%', stage: 'open' },
-    };
-  } catch (err: any) {
-    return {
-      success: false,
-      data: null,
-      error: err.message,
-      metadata: { iteration: 0, progress: '0%', stage: 'open' },
-    };
-  }
+    }],
+    metadata: { successProgress: '3%', failureProgress: '0%', stage: 'open' },
+    isSuccess: () => true,
+  });
 }
 
 /**
- * aza_prd_multi_review — V20 多步生成第 2 步：生成 4 角色对抗式审查 prompts
+ * aza_prd_multi_review — V20 多步生成第 2 步：生成 4 角色对抗式审查 prompts。
  */
 export async function handlePrdMultiReview(
   prdDraft: string,
   stateManager: StateManager,
   resumeGenerator: ResumeGenerator,
 ): Promise<LoopResponse> {
-  try {
-    const gate = getPRDReviewGate(stateManager, resumeGenerator);
-    const result = await gate.multiReview(prdDraft);
-    return {
-      success: result.prd_parsed,
-      data: result,
-      next_action: result.next_action,
-      metadata: { iteration: 0, progress: '6%', stage: 'open' },
-    };
-  } catch (err: any) {
-    return {
-      success: false,
-      data: null,
-      error: err.message,
-      metadata: { iteration: 0, progress: '0%', stage: 'open' },
-    };
-  }
+  return withPRDGate(stateManager, resumeGenerator, getPRDReviewGate, {
+    gateMethod: 'multiReview',
+    gateArgs: [prdDraft],
+    metadata: { successProgress: '6%', failureProgress: '0%', stage: 'open' },
+    isSuccess: (result) => result.prd_parsed === true,
+  });
 }
 
 /**
- * aza_prd_refine — V20 多步生成第 3 步：解析精炼后 PRD + 检查 + 路由
+ * aza_prd_refine — V20 多步生成第 3 步：解析精炼后 PRD + 检查 + 路由。
  */
 export async function handlePrdRefine(
   refinedPrd: string,
@@ -287,21 +226,10 @@ export async function handlePrdRefine(
   stateManager: StateManager,
   resumeGenerator: ResumeGenerator,
 ): Promise<LoopResponse> {
-  try {
-    const gate = getPRDReviewGate(stateManager, resumeGenerator);
-    const result = await gate.refine(refinedPrd, reviewResponses);
-    return {
-      success: result.refined,
-      data: result,
-      next_action: result.next_action,
-      metadata: { iteration: 0, progress: '8%', stage: 'open' },
-    };
-  } catch (err: any) {
-    return {
-      success: false,
-      data: null,
-      error: err.message,
-      metadata: { iteration: 0, progress: '0%', stage: 'open' },
-    };
-  }
+  return withPRDGate(stateManager, resumeGenerator, getPRDReviewGate, {
+    gateMethod: 'refine',
+    gateArgs: [refinedPrd, reviewResponses],
+    metadata: { successProgress: '8%', failureProgress: '0%', stage: 'open' },
+    isSuccess: (result) => result.refined === true,
+  });
 }

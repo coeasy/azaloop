@@ -46,7 +46,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        action: { ...actionProp, enum: ['review', 'approve', 'modify', 'cancel', 'generate', 'validate', 'draft', 'multi_review', 'refine'] },
+        action: { ...actionProp, enum: ['review', 'approve', 'modify', 'cancel', 'generate', 'validate', 'draft', 'multi_review', 'refine', 'explore'] },
         title: { type: 'string' },
         description: { type: 'string' },
         feedback: { type: 'string' },
@@ -213,9 +213,9 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
   },
   {
     name: 'aza_auto',
-    whenToUse: 'ONE-CLICK entry point for full automation — use this when user wants to automatically complete entire development workflow (PRD → design → build → verify → archive) without manual intervention',
+    whenToUse: 'ONE-CLICK entry point when the user wants the entire development workflow (PRD → design → build → verify → archive) completed without further user input; the host coding assistant must execute returned implementation actions automatically',
     description:
-      '【一键全自动入口】调用后自动完成：会话初始化 → PRD 生成与审批 → 循环执行(open→design→build→verify→archive) → 质量检查 → 交付。宿主 AI 收到响应后必须立即执行 next_action，不要询问用户是否继续。这是推荐的全自动循环入口，优于手动分步调用。',
+      '【一键全自动入口】调用后自动完成会话初始化、方案选择、PRD 生成与审批，并驱动 open→design→build→verify→archive。MCP 内联 design/quality/ship；宿主 AI 必须自动执行返回的 implement next_action 并立即 report_tool，全程不要再次询问用户。这是推荐入口。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -257,22 +257,30 @@ export function getFormattedToolDefinitions(): Array<{
 }
 
 /**
- * P2-1: Stage-scoped tool groups — hosts should prefer these to shrink MCP context.
- * Full registry remains available; stage filter returns the recommended subset.
+ * Stage-scoped tool groups — MUST stay aligned with L7 stage-tool-guard ALWAYS list.
  *
- * open    → session, prd
- * design  → session, prd, spec
- * build   → session, loop, spec
- * verify  → session, loop, quality
- * archive → session, finish, memory
- * always  → meta (diagnostics)
+ * BUG (2026-07-16): open previously listed only session/prd/meta. Hosts that filter
+ * tools/list by stage then could not call aza_loop / aza_auto after PRD approve,
+ * so the full-auto spine never advanced past open.
+ *
+ * Spine tools (ALWAYS): session, loop, memory, meta, quality, auto — every stage.
+ * Stage extras: prd @ open/design; spec @ design/build/verify; finish @ verify/archive.
  */
+const SPINE_TOOLS = [
+  'aza_session',
+  'aza_loop',
+  'aza_memory',
+  'aza_meta',
+  'aza_quality',
+  'aza_auto',
+] as const;
+
 export const STAGE_TOOL_GROUPS: Record<string, string[]> = {
-  open: ['aza_session', 'aza_prd', 'aza_meta'],
-  design: ['aza_session', 'aza_prd', 'aza_spec', 'aza_loop', 'aza_meta'],
-  build: ['aza_session', 'aza_loop', 'aza_spec', 'aza_meta'],
-  verify: ['aza_session', 'aza_loop', 'aza_quality', 'aza_spec', 'aza_meta'],
-  archive: ['aza_session', 'aza_finish', 'aza_memory', 'aza_quality', 'aza_meta'],
+  open: [...SPINE_TOOLS, 'aza_prd', 'aza_spec', 'aza_finish'],
+  design: [...SPINE_TOOLS, 'aza_prd', 'aza_spec'],
+  build: [...SPINE_TOOLS, 'aza_spec'],
+  verify: [...SPINE_TOOLS, 'aza_spec', 'aza_finish'],
+  archive: [...SPINE_TOOLS, 'aza_finish', 'aza_spec'],
   all: TOOL_REGISTRY.map((t) => t.name),
 };
 

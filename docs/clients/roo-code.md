@@ -1,39 +1,26 @@
-# AzaLoop × Roo Code
+# Roo Code (Cline fork) (`roo-code`)
 
-**Tier:** T2 Partial | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ✅ (via rules)
+> Tier1: ⚪ experimental | Category: ide | Since: 0.1.1
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=roo-code`
+
+## 安装步骤
+
+- VSCode + Roo Code + mcpServers
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client roo-code
+claude-code --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.roo/mcp.json` |
-| 规则文件 | `.roo/azaloop.md` |
+- `aza_session`
+- `aza_loop`
 
-### MCP 配置 `.roo/mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-Roo Code 支持自动 next_action 链跟踪，输入需求即可。
-
-## Troubleshooting
-
-- 确保 `.roo/` 目录在项目根目录
-- 规则文件自动加载到聊天上下文
+- VSCode 依赖

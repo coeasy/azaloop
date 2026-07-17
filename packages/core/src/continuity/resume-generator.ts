@@ -18,7 +18,7 @@ export interface ResumeData {
   last_milestone: string;
   /** R2: 任务 ID，跨任务恢复校验用 */
   task_id?: string;
-  /** R2: 用户输入哈希（前 16 位），防止 RESUME 错配到不同任务 */
+  /** R2: 32-hex-character (128-bit) task fingerprint for recovery isolation. */
   user_input_hash?: string;
   /** R10: 引擎代际标记，跨客户端/跨版本恢复时用于识别不兼容状态 */
   engine_version?: string;
@@ -131,7 +131,7 @@ export interface LedgerSummary {
 }
 
 export class ResumeGenerator {
-  private azaDir: string;
+  readonly azaDir: string;
 
   constructor(azaDir: string) {
     this.azaDir = azaDir;
@@ -244,8 +244,9 @@ export class ResumeGenerator {
     try {
       const content = await fs.readFile(this.getPath(), 'utf8');
       return this.parse(content);
-    } catch {
-      return null;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
     }
   }
 
@@ -427,6 +428,10 @@ export class ResumeGenerator {
       `client: ${JSON.stringify(resume.client)}`,
       `model: ${JSON.stringify(resume.model)}`,
       `engine_version: ${JSON.stringify(resume.engine_version ?? AZALOOP_ENGINE_VERSION)}`,
+      resume.task_id ? `task_id: ${JSON.stringify(resume.task_id)}` : null,
+      resume.user_input_hash
+        ? `user_input_hash: ${JSON.stringify(resume.user_input_hash)}`
+        : null,
       `next_tool: ${JSON.stringify(resume.next_tool)}`,
       `next_action: ${JSON.stringify(resume.next_action)}`,
       `updated_at: ${JSON.stringify(new Date().toISOString())}`,
@@ -470,6 +475,9 @@ export class ResumeGenerator {
   }
 
   private parse(content: string): ResumeData {
+    if (!content.trim()) {
+      throw new Error('RESUME.md is empty');
+    }
     // Prefer YAML frontmatter (schema_version 1.0+) when present
     const fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (fm && fm[1]) {
@@ -478,17 +486,44 @@ export class ResumeGenerator {
         const m = line.match(/^(\w+):\s*(.*)$/);
         if (m && m[1] && m[2] !== undefined) {
           let v = m[2].trim();
-          if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+          if (v.startsWith('"') && v.endsWith('"')) {
+            try {
+              const decoded: unknown = JSON.parse(v);
+              if (typeof decoded === 'string') {
+                v = decoded;
+              }
+            } catch (error) {
+              throw new Error(`RESUME.md has invalid quoted frontmatter: ${m[1]}`, {
+                cause: error,
+              });
+            }
+          } else if (v.startsWith("'") && v.endsWith("'")) {
             v = v.slice(1, -1);
           }
           data[m[1]] = v;
         }
       }
-      if (data.stage || data.next_tool) {
+      if (data.schema_version !== '1.0') {
+        throw new Error('RESUME.md has an unsupported or missing schema_version');
+      }
+      if (data.stage && data.next_tool && data.next_action) {
+        if (!['open', 'design', 'build', 'verify', 'archive'].includes(data.stage)) {
+          throw new Error(`RESUME.md has an invalid stage: ${data.stage}`);
+        }
+        if (
+          data.user_input_hash &&
+          !/^[a-f0-9]{32}$/.test(data.user_input_hash)
+        ) {
+          throw new Error('RESUME.md has an invalid user_input_hash');
+        }
+        const iteration = Number.parseInt(data.iteration || '', 10);
+        if (!Number.isInteger(iteration) || iteration < 0) {
+          throw new Error('RESUME.md has an invalid iteration');
+        }
         return {
           current_stage: data.stage || 'open',
           current_story: data.story,
-          iteration: parseInt(data.iteration || '0', 10),
+          iteration,
           progress: data.progress || '0%',
           client: data.client || 'unknown',
           model: data.model || 'unknown',
@@ -496,32 +531,14 @@ export class ResumeGenerator {
           next_tool: data.next_tool || 'aza_loop',
           errors_to_avoid: [],
           last_milestone: data.updated_at || new Date().toISOString(),
+          task_id: data.task_id,
+          user_input_hash: data.user_input_hash,
           engine_version: data.engine_version,
         };
       }
+      throw new Error('RESUME.md is missing required vNext frontmatter fields');
     }
-
-    const lines = content.split('\n');
-    const data: Record<string, string> = {};
-    for (const line of lines) {
-      const match = line.match(/^-\s+\*\*(.+?):\*\*\s+(.+)/);
-      if (match && match[1] && match[2]) {
-        data[match[1].toLowerCase()] = match[2].trim();
-      }
-    }
-    return {
-      current_stage: data['stage'] || 'open',
-      current_story: data['story'],
-      iteration: parseInt(data['iteration'] || '0', 10),
-      progress: data['progress'] || '0%',
-      client: data['client'] || 'unknown',
-      model: data['model'] || 'unknown',
-      next_action: data['action'] || 'full',
-      next_tool: data['tool'] || 'aza_loop',
-      errors_to_avoid: [],
-      last_milestone: new Date().toISOString(),
-      engine_version: data['engine_version'],
-    };
+    throw new Error('RESUME.md must use vNext frontmatter');
   }
 
   private getNextTool(stage: string): string {

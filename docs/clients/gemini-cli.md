@@ -1,39 +1,29 @@
-# AzaLoop × Gemini CLI
+# Gemini CLI (`gemini-cli`)
 
-**Tier:** T2 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ✅ (via rules)
+> Tier1: ⚪ experimental | Category: cli | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=gemini-cli`
+- `GOOGLE_API_KEY`
+
+## 安装步骤
+
+- npm i -g @google/gemini-cli
+- 配置 ~/.gemini/settings.json 加入 mcpServers
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client gemini-cli
+gemini --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.gemini/mcp.json` |
-| 规则文件 | `.gemini/rules.md` |
+- `aza_session`
+- `aza_auto`
+- `aza_loop`
 
-### MCP 配置 `.gemini/mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-Gemini CLI 支持规则注入和自动 next_action 链跟踪。
-
-## Troubleshooting
-
-- Gemini CLI 支持 skills 系统
-- 需要 `.gemini/` 目录在项目根目录
+- MCP 实验阶段

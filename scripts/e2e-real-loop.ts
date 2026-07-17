@@ -1,5 +1,5 @@
 /**
- * AzaLoop 0.1.0 — End-to-end full-auto loop harness (REAL handlers).
+ * AzaLoop 0.1.1 — End-to-end full-auto loop harness (REAL handlers).
  *
  * Proves the core link is connected with NO simulated flow:
  *   - open   → real PRDChecker on a seeded valid PRD
@@ -35,8 +35,26 @@ const prd = new PRDGenerator().generate({
 });
 write(path.join(AZA, 'prd.json'), JSON.stringify(prd, null, 2));
 
-// ── design: real architecture doc + 7 diagrams ──
-write(path.join(AZA, 'design.md'), '# Architecture\n\nReal design document.\n');
+// ── design: real architecture doc (lean bar: "## Technical Approach" + >=80 chars) + 7 diagrams ──
+write(
+  path.join(AZA, 'design.md'),
+  [
+    '# Architecture',
+    '',
+    '## Technical Approach',
+    '',
+    'AzaLoop drives a PRD-first three-level loop. The controller advances open → design →',
+    'build → verify → archive, verifying each stage with real tools (PRDChecker, tsc, vitest)',
+    'rather than fabricated metrics. State persists in .aza so work survives across sessions.',
+    '',
+    '## Components',
+    '',
+    '- LoopController: orchestrates the phase loop and circuit breaker.',
+    '- Real handlers: maker/checker/optimizer gated on actual artifacts.',
+    '- StateMachine: tracks stage status, progress, and attestation.',
+    '',
+  ].join('\n'),
+);
 for (let i = 1; i <= 7; i++) write(path.join(AZA, 'diagrams', `d${i}.md`), `# Diagram ${i}\n`);
 
 // ── build: real source + passing test (TDD: test proves behavior) ──
@@ -52,6 +70,13 @@ write(path.join(WORK, 'vitest.config.ts'),
 write(path.join(WORK, 'src', 'add.ts'), 'export function add(a: number, b: number): number { return a + b; }\n');
 write(path.join(WORK, 'src', 'add.test.ts'),
   "// @ts-nocheck\nimport { add } from './add';\nimport { test, expect } from 'vitest';\ntest('adds', () => { expect(add(1, 2)).toBe(3); });\n");
+
+// ── build/verify: host-handshake markers (simulates an autonomous host that
+//    ran aza_spec(implement) → build-complete.marker and aza_quality(check) →
+//    quality-passed.marker after doing the real work). The engine trusts these
+//    markers to avoid monorepo-root tsc/vitest false circuit-breaker trips. ──
+write(path.join(AZA, 'build-complete.marker'), new Date().toISOString() + '\n');
+write(path.join(AZA, 'quality-passed.marker'), new Date().toISOString() + '\n');
 
 // ── archive: 6 real documents ──
 for (const d of ['prd.md', 'architecture.md', 'data-model.md', 'api.md', 'test-plan.md', 'deployment.md']) {

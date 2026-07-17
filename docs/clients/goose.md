@@ -1,37 +1,28 @@
-# AzaLoop × Goose
+# Goose (Block) (`goose`)
 
-**Tier:** T3 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ❌ (manual)
+> Tier1: ⚪ experimental | Category: cli | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=goose`
+
+## 安装步骤
+
+- pip install goose-ai
+- 配置 ~/.config/goose/config.yaml
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client goose
+goose session --with-mcp aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `mcp.json` (项目根目录) |
+- `aza_session`
+- `aza_auto`
+- `aza_loop`
 
-### MCP 配置 `mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"]
-    }
-  }
-}
-```
-
-## 使用
-
-Goose 自动读取项目根目录的 MCP 配置。
-
-## Troubleshooting
-
-- 配置文件名需要是 `mcp.json`（在项目根目录）
-- 无自动 next_action 链跟踪
+- CLI 模式

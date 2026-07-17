@@ -1,39 +1,26 @@
-# AzaLoop × OpenClaw
+# OpenClaw (`openclaw`)
 
-**Tier:** T3 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ❌ (manual trigger)
+> Tier1: ⚪ experimental | Category: ide | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=openclaw`
+
+## 安装步骤
+
+- OpenClaw 桌面 + 配置 MCP
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client openclaw
+openclaw --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `mcp.json` (项目根目录) |
-| 规则文件 | `clawhub.json` |
+- `aza_session`
+- `aza_loop`
 
-### MCP 配置 `mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-OpenClaw 的规则通过 `clawhub.json` 管理。循环步骤需手动跟踪。
-
-## Troubleshooting
-
-- 配置在项目根目录
-- openclaw 是为 AGI 设计的编程平台
+- 实验性

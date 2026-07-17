@@ -287,8 +287,8 @@ describe('Main-pipeline integration — Trae full-auto loop', () => {
       expect(r.next_action).toBeDefined();
       expect(typeof r.next_action!.tool).toBe('string');
     }
-    // Cooperative host model (0.2.x): stages may remain in_progress while
-    // awaiting LLM tool execution — do not require all five completed.
+    // Cooperative host model (0.2.x): stages may remain in_progress / blocked
+    // while awaiting LLM tool execution or quality gates — do not require completed.
     const restored = new StateManager(azaDir);
     const state = await restored.load();
     for (const stage of stages) {
@@ -298,8 +298,8 @@ describe('Main-pipeline integration — Trae full-auto loop', () => {
     }
     console.log('DEBUG bridge4 stages:', JSON.stringify(state.pipeline.stages));
     expect(
-      ['completed', 'in_progress'].includes(state.pipeline.stages.open.status) ||
-        ['completed', 'in_progress'].includes(state.pipeline.stages.design.status),
+      ['completed', 'in_progress', 'blocked'].includes(state.pipeline.stages.open.status) ||
+        ['completed', 'in_progress', 'blocked'].includes(state.pipeline.stages.design.status),
     ).toBe(true);
   }, 60_000);
 

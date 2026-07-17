@@ -1,44 +1,27 @@
-# AzaLoop × Windsurf
+# Windsurf (`windsurf`)
 
-**Tier:** T2 Partial | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ❌ (manual loop)
+> Tier1: ⚪ experimental | Category: ide | Since: 0.1.1
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=windsurf`
+
+## 安装步骤
+
+- 安装 Windsurf → MCP → aza mcp serve
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client windsurf
+aza mcp serve --client windsurf
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.windsurf/mcp.json` |
-| 规则文件 | `.windsurf/rules/azaloop.md` |
+- `aza_session`
+- `aza_auto`
+- `aza_loop`
 
-### MCP 配置 `.windsurf/mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-需要手动调用循环步骤：
-
-```
-1. aza_session_start
-2. aza_prd_generate
-3. aza_loop_next (手动触发)
-```
-
-## Troubleshooting
-
-- Windsurf 无自动 next_action 链跟踪
+- MCP 支持较新

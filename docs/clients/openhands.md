@@ -1,39 +1,31 @@
-# AzaLoop × OpenHands
+# OpenHands (`openhands`)
 
-**Tier:** T2 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ❌ (manual)
+> Tier1: ⚪ experimental | Category: cloud | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=openhands`
+- `OPENHANDS_API_KEY`
+
+## 安装步骤
+
+- docker pull allhandsai/openhands
+- 配置 runtime 挂载 aza mcp
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client openhands
+openhands --mcp-server "aza mcp serve"
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.openhands/mcp.json` |
-| 规则文件 | `.openhands/instructions.md` |
+- `aza_session`
+- `aza_auto`
+- `aza_loop`
+- `aza_meta`
 
-### MCP 配置 `.openhands/mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-OpenHands（原 OpenDevin）通过 MCP 协议调用 AzaLoop 工具。
-
-## Troubleshooting
-
-- 需要 OpenHands MCP 支持
-- 规则文件指导 agent 行为但无法强制执行
+- 云端 runtime
+- 需 Docker

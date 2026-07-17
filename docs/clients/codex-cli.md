@@ -1,39 +1,29 @@
-# AzaLoop × Codex CLI
+# Codex CLI (OpenAI) (`codex-cli`)
 
-**Tier:** T2 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ✅ (via rules)
+> Tier1: ⚪ experimental | Category: cli | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=codex-cli`
+- `OPENAI_API_KEY`
+
+## 安装步骤
+
+- npm i -g @openai/codex
+- 配置 ~/.codex/config.toml
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client codex-cli
+codex --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `mcp.json` (项目根目录) |
-| 规则文件 | `AGENTS.md` |
+- `aza_session`
+- `aza_auto`
+- `aza_loop`
 
-### MCP 配置 `mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-Codex CLI 读取根目录的 MCP 配置和 `AGENTS.md` 规则。
-
-## Troubleshooting
-
-- `AGENTS.md` 在项目根目录，用于定义 agent 行为
-- 支持自动 next_action 链
+- CLI 模式

@@ -1,39 +1,28 @@
-# AzaLoop × Qwen Code (阿里)
+# Qwen Code (通义灵码) (`qwen-code`)
 
-**Tier:** T2 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ✅ (via rules)
+> Tier1: ⚪ experimental | Category: ide | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=qwen-code`
+- `DASHSCOPE_API_KEY`
+
+## 安装步骤
+
+- VSCode/JetBrains 安装 Lingma 扩展
+- 切换 Qwen Code 模式
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client qwen-code
+qwen-code --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.qwen/mcp.json` |
-| 规则文件 | `.qwen/rules.md` |
+- `aza_session`
+- `aza_loop`
 
-### MCP 配置 `.qwen/mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-Qwen Code 支持规则注入和自动 next_action 链。
-
-## Troubleshooting
-
-- 阿里 Qwen Code 的 MCP 配置在 `.qwen/` 目录
-- 规则文件驱动自动循环
+- 国内 token 走 DashScope

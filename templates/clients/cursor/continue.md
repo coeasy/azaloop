@@ -14,6 +14,19 @@
 
 ## 全自动脊柱
 
+**推荐一键入口（优先）：**
+
+```
+aza_auto(user_input="需求描述")
+→ HOST_MUST_EXECUTE: 立刻执行 next_action / awaitingAction（禁止问 Continue）
+→ aza_loop(report_tool, tool_name=刚执行的工具)
+→ 重复直到 aza_finish(ship)
+```
+
+> 合作式全自动会在 design/build/verify **暂停等宿主工具**；停下来问用户 = 循环「看起来没跑完」。
+
+**分步等价：**
+
 ```
 aza_prd(review[, auto_approve=true])
 → aza_loop(full)
@@ -23,6 +36,8 @@ aza_prd(review[, auto_approve=true])
 ```
 
 无人值守：设置 `AZA_AUTO_APPROVE_PRD=true` 或 review 时传 `auto_approve=true`。
+
+> 注意：open 阶段工具面必须包含 `aza_loop` + `aza_auto`，否则全自动脊柱无法推进（2026-07-16 已修复）。
 
 ## MCP 配置
 

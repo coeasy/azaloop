@@ -1,39 +1,26 @@
-# AzaLoop × Continue
+# Continue (`continue`)
 
-**Tier:** T2 Partial | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ❌ (manual)
+> Tier1: ⚪ experimental | Category: ide | Since: 0.1.1
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=continue`
+
+## 安装步骤
+
+- VSCode + Continue + config.yaml
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client continue
+continue --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.continue/config.json` |
-| 规则文件 | `.continuerules` |
+- `aza_session`
+- `aza_loop`
 
-### MCP 配置 `.continue/config.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": [
-    {
-      "name": "azaloop",
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  ]
-}
-```
-
-## 使用
-
-Continue 使用 `mcpServers` 数组格式，重启后生效。
-
-## Troubleshooting
-
-- Continue 配置格式与其他客户端的 `mcpServers` 对象不同
+- 依赖 VSCode

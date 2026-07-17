@@ -94,6 +94,10 @@ export interface InnerLoopOptions {
    * under `<azaDir>/tasks/<taskId>/NOTES.md`. Defaults to '.aza'.
    */
   azaDir?: string;
+  /** Current story id for Maker/Checker review cap (superpowers: max 3). */
+  storyId?: string;
+  /** Max consecutive checker failures before blocking story (default 3). */
+  maxCheckerFailures?: number;
   /**
    * G6: optional stage handler provider — when set, the 5 phase
    * handlers (planner / maker / checker / optimizer / finalize) inside
@@ -160,6 +164,8 @@ export class InnerLoop {
       maxPhaseIterations: options.maxPhaseIterations ?? 5,
       dpRegistry: options.dpRegistry,
       azaDir: options.azaDir,
+      storyId: options.storyId,
+      maxCheckerFailures: options.maxCheckerFailures ?? 3,
       handlerProvider: options.handlerProvider,
     };
     this.azaDir = options.azaDir ?? '.aza';
@@ -168,6 +174,9 @@ export class InnerLoop {
     this.phaseLoop = new PhaseLoop(circuitBreaker, {
       maxIterations: this.options.maxPhaseIterations ?? 5,
       dpRegistry: this.options.dpRegistry,
+      azaDir: this.azaDir,
+      storyId: this.options.storyId,
+      maxCheckerFailures: this.options.maxCheckerFailures ?? 3,
     });
   }
 

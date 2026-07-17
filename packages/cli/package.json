@@ -1,6 +1,6 @@
 {
   "name": "@azaloop/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "AzaLoop CLI — one-command setup for all 25+ MCP clients",
   "main": "dist/index.js",

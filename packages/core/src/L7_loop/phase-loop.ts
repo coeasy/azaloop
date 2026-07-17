@@ -16,6 +16,12 @@ import {
 // maker's `work` contains a sentinel (e.g. <promise>TASK_COMPLETE</promise>)
 // we exit the phase immediately instead of looping until max iterations.
 import { detectSentinel, type SentinelMatch } from './completion-sentinel';
+import {
+  isStoryBlockedByReviewCap,
+  recordCheckerFailure,
+  recordCheckerPass,
+  DEFAULT_MAX_CHECKER_FAILURES,
+} from './maker-checker-cap';
 
 /**
  * The role of the active agent within a single iteration.
@@ -78,6 +84,12 @@ export interface PhaseLoopOptions {
   maxIterations?: number;
   /** Decision point registry for recording DP transitions (DP-0 to DP-7). */
   dpRegistry?: DecisionPointRegistry;
+  /** .aza directory for Maker/Checker review cap persistence. */
+  azaDir?: string;
+  /** Current story id for review cap accounting. */
+  storyId?: string;
+  /** Max consecutive checker failures before blocking story (default 3). */
+  maxCheckerFailures?: number;
 }
 
 /**
@@ -176,6 +188,9 @@ export class PhaseLoop {
   private history: IterationRecord[] = [];
   private dynamicBinder: DynamicBinder;
   private dpRegistry?: DecisionPointRegistry;
+  private azaDir?: string;
+  private storyId?: string;
+  private maxCheckerFailures: number;
 
   constructor(
     circuitBreaker?: CircuitBreaker,
@@ -185,6 +200,9 @@ export class PhaseLoop {
     this.circuitBreaker = circuitBreaker;
     this.dynamicBinder = new DynamicBinder();
     this.dpRegistry = options.dpRegistry;
+    this.azaDir = options.azaDir;
+    this.storyId = options.storyId;
+    this.maxCheckerFailures = options.maxCheckerFailures ?? DEFAULT_MAX_CHECKER_FAILURES;
   }
 
   /**
@@ -212,6 +230,21 @@ export class PhaseLoop {
   ): Promise<PhaseOneResult> {
     const iterationStart = new Date().toISOString();
     const suggestions: string[] = [];
+
+    // Maker/Checker cap: refuse to burn tokens once story is blocked
+    if (this.azaDir && isStoryBlockedByReviewCap(this.azaDir, this.storyId)) {
+      return {
+        done: true,
+        iteration,
+        work: currentWork,
+        success: false,
+        escalated: true,
+        escalation_reason: `Maker/Checker review cap exceeded for story ${this.storyId || '(unknown)'} — blocked after ${this.maxCheckerFailures} consecutive checker failures`,
+        suggestions: [
+          'Fix checker failures or reset .aza/maker-checker-cap.json after human review',
+        ],
+      };
+    }
 
     // V12: Inject role prompts from DynamicBinder — real context injection
     const roles = this.dynamicBinder.getRoleForStage(stage);
@@ -420,6 +453,9 @@ export class PhaseLoop {
 
     if (evaluation.passed) {
       // Gate passed — phase succeeded
+      if (this.azaDir && this.storyId) {
+        recordCheckerPass(this.azaDir, this.storyId);
+      }
       this.recordIteration({
         iteration,
         role: 'checker',
@@ -457,6 +493,34 @@ export class PhaseLoop {
     // ── Step 4: Gate failed → record and optimize ──
     const suggestion = evaluation.blocking_reason || `Stage "${stage}" gate check failed`;
     suggestions.push(`Iteration ${iteration}: ${suggestion}`);
+
+    if (this.azaDir && this.storyId) {
+      const cap = recordCheckerFailure(this.azaDir, this.storyId, this.maxCheckerFailures);
+      if (cap.blocked) {
+        this.recordIteration({
+          iteration,
+          role: 'checker',
+          started_at: iterationStart,
+          completed_at: new Date().toISOString(),
+          tokens_used: totalTokens,
+          gate_passed: false,
+          gate_evaluation: evaluation,
+          suggestion: `Review cap blocked story after ${cap.consecutive_checker_failures} failures`,
+        });
+        return {
+          done: true,
+          iteration,
+          work,
+          success: false,
+          escalated: true,
+          escalation_reason: `Maker/Checker review cap: ${cap.consecutive_checker_failures}/${cap.max_failures} failures — story blocked`,
+          suggestions: [
+            suggestion,
+            'Do not advance to next story until human review or cap reset',
+          ],
+        };
+      }
+    }
 
     this.recordIteration({
       iteration,

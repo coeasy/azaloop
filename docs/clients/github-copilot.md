@@ -1,39 +1,27 @@
-# AzaLoop × GitHub Copilot
+# GitHub Copilot (`github-copilot`)
 
-**Tier:** T2 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ❌ (manual)
+> Tier1: ⚪ experimental | Category: ide | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=github-copilot`
+- `GH_TOKEN`
+
+## 安装步骤
+
+- VSCode + Copilot Chat 扩展 + 启用 MCP 协议
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client github-copilot
+copilot --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.github/mcp.json` |
-| 指令文件 | `.github/copilot-instructions.md` |
+- `aza_session`
+- `aza_loop`
 
-### MCP 配置 `.github/mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-在 GitHub Copilot Chat 中，通过 `@azaloop` 调用工具。
-
-## Troubleshooting
-
-- 需要 GitHub Copilot Chat 权限
-- 确保 `.github/mcp.json` 格式正确
+- MCP 协议需 Copilot Chat ≥ 0.18

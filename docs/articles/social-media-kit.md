@@ -96,7 +96,7 @@ AzaLoop 有 5 个阶段的全自动流水线：
 25+ 客户端支持：
 
 T1 全功能：Cursor、Claude Code、OpenCode、Trae
-T2 部分：VS Code + Copilot、Cline、Windsurf、Continue、Claude Desktop、Comate（百度）、Workbuddy（字节）、Qwen Code（阿里）
+T2 部分：VS Code + Copilot、Cline、Windsurf、Continue、Claude Desktop、Comate（百度）、WorkBuddy（腾讯）、Qwen Code（阿里）
 T3 基础：Aider、Zed、Goose、Hermes 等
 
 **Tweet 8/8:**

@@ -11,6 +11,7 @@ export default defineConfig({
     alias: {
       '@azaloop/shared': path.resolve(__dirname, 'packages/shared/src/index.ts'),
       '@azaloop/core': path.resolve(__dirname, 'packages/core/src/index.ts'),
+      '@azaloop/mcp-server': path.resolve(__dirname, 'packages/mcp-server/src/index.ts'),
     },
   },
   server: {

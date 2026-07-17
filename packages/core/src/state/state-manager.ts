@@ -6,7 +6,11 @@ import { StateSchema, type State } from '@azaloop/shared';
 import { computeChecksum, verifyChecksum } from './checksum';
 import type { StageStatus } from '@azaloop/shared';
 // R10 第7轮 (D7)：单一来源 — schema 版本由 migrations/registry 集中声明
-import { getLatestSchemaVersion, hasMigrationPath } from './migrations/registry';
+import {
+  getLatestSchemaVersion,
+  getMigrationPath,
+  hasMigrationPath,
+} from './migrations/registry';
 
 // ── Re-exported from merged run-state.ts ──
 // Machine-owned run state (run-state.json) — scripts only write, agents only read.
@@ -34,6 +38,26 @@ export interface RunState {
   updated_at: string;
 }
 
+export class StateMigrationError extends Error {
+  readonly code: 'MIGRATION_PATH_MISSING' | 'MIGRATION_BACKUP_FAILED' | 'MIGRATION_STEP_FAILED';
+  readonly fromVersion: number;
+  readonly toVersion: number;
+
+  constructor(
+    code: StateMigrationError['code'],
+    fromVersion: number,
+    toVersion: number,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'StateMigrationError';
+    this.code = code;
+    this.fromVersion = fromVersion;
+    this.toVersion = toVersion;
+  }
+}
+
 export interface AuditEntry {
   timestamp: string;
   type: 'dp_transition' | 'state_transition' | 'gate_pass' | 'gate_fail' | 'circuit_breaker' | 'hard_stop' | 'strike' | 'stage_complete' | 'convention_written' | 'context_injection' | 'run_start' | 'run_end' | 'minor_drift';
@@ -43,7 +67,8 @@ export interface AuditEntry {
   details?: Record<string, unknown>;
 }
 
-const DEFAULT_STATE: State = {
+function createDefaultState(): State {
+  return {
   pipeline: {
     current_stage: 'open',
     stages: {
@@ -82,7 +107,8 @@ const DEFAULT_STATE: State = {
   strikes: 0,
   attestation: { verified: true },
   updated_at: new Date().toISOString(),
-};
+  };
+}
 
 export class StateManager {
   /** Public — exposes the aza directory so adjacent components (e.g. PRDReviewGate
@@ -99,7 +125,7 @@ export class StateManager {
     this.statePath = path.join(azaDir, 'STATE.yaml');
     this.checksumPath = path.join(azaDir, 'STATE.CHECKSUM');
     this.contentHashPath = path.join(azaDir, 'STATE.HASH');
-    this.state = { ...DEFAULT_STATE };
+    this.state = createDefaultState();
   }
 
   /**
@@ -164,7 +190,17 @@ export class StateManager {
         }
       }
       const parsed = yaml.load(content);
-      this.state = StateSchema.parse(parsed);
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('STATE.yaml must contain a YAML object');
+      }
+      const rawState = parsed as Record<string, unknown>;
+      const version = this.readSchemaVersion(rawState);
+      const target = StateManager.CURRENT_STATE_VERSION;
+      if (version < target) {
+        this.state = await this.migrateLoadedState(rawState, version, target);
+      } else {
+        this.state = StateSchema.parse(rawState);
+      }
       // Load and cache content hash
       this.lastContentHash = await this.loadContentHash();
       return this.state;
@@ -180,7 +216,10 @@ export class StateManager {
   async save(): Promise<void> {
     // Ensure .aza directory exists before writing any files
     await fs.mkdir(path.dirname(this.statePath), { recursive: true }).catch(() => {});
-    const content = yaml.dump(this.state, { indent: 2 });
+    const content = yaml.dump(
+      { ...this.state, schema_version: StateManager.CURRENT_STATE_VERSION },
+      { indent: 2 },
+    );
     // R1-P0: 原子写入（tmp + rename），避免进程崩溃导致 STATE.yaml 半写损坏
     await this.atomicWriteState(this.statePath, content);
     const checksum = await computeChecksum(content);
@@ -212,6 +251,24 @@ export class StateManager {
     this.state.updated_at = new Date().toISOString();
     await this.save();
     return this.state;
+  }
+
+  /**
+   * Destructive vNext reset. This is intentionally a full replacement rather
+   * than a merge, so no task-owned nested fields survive into the next run.
+   * The previous in-memory state is restored if persistence fails; the caller
+   * owns rollback of the three on-disk state files as part of its transaction.
+   */
+  async resetVNext(): Promise<State> {
+    const previous = this.state;
+    this.state = createDefaultState();
+    try {
+      await this.save();
+      return this.state;
+    } catch (error) {
+      this.state = previous;
+      throw error;
+    }
   }
 
   async setStage(stage: string, status: StageStatus): Promise<void> {
@@ -322,15 +379,16 @@ export class StateManager {
       await fs.rename(tmp, filePath);
     } catch (renameErr: any) {
       // 跨平台健壮性：Windows 上目标文件可能被防病毒/索引服务占用，
-      // 导致 rename 抛 EPERM/EBUSY。降级为直接覆盖写入（仍保证内容完整），
-      // 避免整个循环因一次 STATE 写失败而崩溃中断。
-      if (renameErr?.code === 'EPERM' || renameErr?.code === 'EBUSY') {
+      // 导致 rename 抛 EPERM/EBUSY/ENOENT。降级为直接覆盖写入。
+      const code = renameErr?.code;
+      if (code === 'EPERM' || code === 'EBUSY' || code === 'ENOENT' || code === 'EEXIST') {
         try {
           await fs.unlink(filePath).catch(() => {});
           await fs.rename(tmp, filePath);
         } catch {
-          // 仍失败 → 最后退路：直接 writeFile 覆盖目标（不保证原子性，但绝不抛错中断循环）
-          await fs.writeFile(filePath, content, 'utf8').catch(() => {});
+          // 仍失败 → 最后退路：直接 writeFile 覆盖目标
+          await fs.writeFile(filePath, content, 'utf8');
+          await fs.unlink(tmp).catch(() => {});
         }
       } else {
         throw renameErr;
@@ -369,31 +427,70 @@ export class StateManager {
   async migrateState(state: Record<string, unknown>, fromVersion: number, toVersion: number): Promise<Record<string, unknown>> {
     if (fromVersion >= toVersion) return state;
     let current = { ...state };
-    for (let v = fromVersion; v < toVersion; v++) {
+    const migrationPath = getMigrationPath(fromVersion, toVersion);
+    if (migrationPath.length === 0) {
+      throw new StateMigrationError(
+        'MIGRATION_PATH_MISSING',
+        fromVersion,
+        toVersion,
+        `No migration available for v${fromVersion} → v${toVersion}. ` +
+          `Register every version step in packages/core/src/state/migrations/registry.ts`,
+      );
+    }
+    for (const migration of migrationPath) {
       try {
-        // Dynamic import so vitest's transform pipeline can pick up
-        // the .ts migration files.
-        const mod = (await import(`./migrations/v${v}-to-v${v + 1}`)) as {
-          default?: (s: Record<string, unknown>) => Record<string, unknown>;
-        };
-        const transformer = mod.default ?? (mod as unknown as (s: Record<string, unknown>) => Record<string, unknown>);
-        if (typeof transformer !== 'function') {
-          throw new Error(`migration v${v}-to-v${v + 1} does not export a function`);
-        }
-        current = transformer(current);
+        current = migration.transformer(current);
       } catch (err) {
-        const e = err as NodeJS.ErrnoException & { code?: string };
-        if (e.code === 'MODULE_NOT_FOUND' || (err as Error).message.includes('Cannot find module')) {
-          throw new Error(
-            `No migration available for v${v} → v${v + 1}. ` +
-              `Create packages/core/src/state/migrations/v${v}-to-v${v + 1}.ts`,
-          );
-        }
-        throw err;
+        const message = err instanceof Error ? err.message : String(err);
+        throw new StateMigrationError(
+          'MIGRATION_STEP_FAILED',
+          migration.from,
+          migration.to,
+          `Migration v${migration.from} → v${migration.to} failed: ${message}`,
+          { cause: err },
+        );
       }
     }
     (current as { schema_version?: number }).schema_version = toVersion;
     return current;
+  }
+
+  private async migrateLoadedState(
+    rawState: Record<string, unknown>,
+    fromVersion: number,
+    toVersion: number,
+  ): Promise<State> {
+    if (!hasMigrationPath(fromVersion, toVersion)) {
+      throw new StateMigrationError(
+        'MIGRATION_PATH_MISSING',
+        fromVersion,
+        toVersion,
+        `No migration available for v${fromVersion} → v${toVersion}. ` +
+          `Register every version step in packages/core/src/state/migrations/registry.ts`,
+      );
+    }
+
+    const backupPath = `${this.statePath}.bak`;
+    try {
+      await fs.copyFile(this.statePath, backupPath);
+    } catch (err) {
+      throw new StateMigrationError(
+        'MIGRATION_BACKUP_FAILED',
+        fromVersion,
+        toVersion,
+        `Unable to back up STATE.yaml before migration v${fromVersion} → v${toVersion}`,
+        { cause: err },
+      );
+    }
+
+    const migrated = await this.migrateState(rawState, fromVersion, toVersion);
+    const persisted = { ...migrated, schema_version: toVersion };
+    const state = StateSchema.passthrough().parse(persisted) as State;
+    const content = yaml.dump(persisted, { indent: 2 });
+    await this.atomicWriteState(this.statePath, content);
+    await this.atomicWriteState(this.checksumPath, await computeChecksum(content));
+    await this.atomicWriteState(this.contentHashPath, await this.computeContentHash());
+    return state;
   }
 
   /**
@@ -406,67 +503,7 @@ export class StateManager {
    * the migration pipeline.
    */
   async loadWithMigration(): Promise<State> {
-    // 1) Ensure STATE.yaml exists (creates a default if missing).
-    await this.load();
-    // 2) Read the raw file and pull out the schema_version.
-    let rawState: Record<string, unknown> = {};
-    try {
-      const content = await fs.readFile(this.statePath, 'utf8');
-      const parsed = yaml.load(content);
-      if (parsed && typeof parsed === 'object') {
-        rawState = parsed as Record<string, unknown>;
-      }
-    } catch {
-      rawState = this.state as unknown as Record<string, unknown>;
-    }
-    const version = this.readSchemaVersion(rawState);
-    const target = StateManager.CURRENT_STATE_VERSION;
-    if (version >= target) {
-      // Re-parse to make sure callers see the latest in-memory state.
-      this.state = StateSchema.parse(rawState);
-      return this.state;
-    }
-    // R10 第7轮 (D7)：预检迁移路径完整性。
-    // 若 registry 声明路径不完整，提前返回避免 migrateState 在运行时才发现
-    // 缺失迁移文件（此时部分状态可能已被改写）。降级使用未迁移状态。
-    if (!hasMigrationPath(version, target)) {
-      console.warn(
-        `[StateManager] no migration path from v${version} to v${target}; ` +
-          `falling back to un-migrated state. Consider adding migrations/v${version}-to-v${version + 1}.ts`,
-      );
-      try {
-        this.state = StateSchema.parse(rawState);
-      } catch {
-        // Schema parse failure — keep in-memory default
-      }
-      return this.state;
-    }
-    try {
-      const migrated = await this.migrateState(rawState, version, target);
-      // Use a passthrough schema to keep `schema_version` and any
-      // forward-compat fields the migration added.
-      const passthrough = StateSchema.passthrough();
-      this.state = passthrough.parse(migrated) as State;
-      // Back up the original (only on the first migration in this run).
-      try {
-        const bakPath = this.statePath + '.bak';
-        await fs.copyFile(this.statePath, bakPath);
-      } catch {
-        // best-effort
-      }
-      // Save with passthrough so schema_version + extra fields persist.
-      const content = yaml.dump(
-        { schema_version: target, ...(migrated as object) },
-        { indent: 2 },
-      );
-      await this.atomicWriteState(this.statePath, content);
-      return this.state;
-    } catch (err) {
-      // Migration failure should not brick the workspace — log and
-      // continue with the un-migrated state.
-      console.warn(`[StateManager] migration v${version} → v${target} failed: ${(err as Error).message}`);
-      return this.state;
-    }
+    return this.load();
   }
 }
 

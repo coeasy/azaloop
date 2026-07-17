@@ -123,6 +123,71 @@ export function resolveToolCall(
   return { tool: mapped.tool, args: nextArgs };
 }
 
+/** R12 P6 Plus17: Old action → unified tool/action mapping. 兼容老 50 tool 名。 */
+export const LEGACY_TOOL_MAP: Record<string, { tool: string; action: string }> = {
+  aza_task_design: { tool: 'aza_spec', action: 'design' },
+  aza_task_implement: { tool: 'aza_spec', action: 'implement' },
+  aza_task_verify: { tool: 'aza_spec', action: 'verify' },
+  aza_quality_check: { tool: 'aza_quality', action: 'check' },
+  aza_doc_generate: { tool: 'aza_finish', action: 'archive' },
+  aza_finish_work: { tool: 'aza_finish', action: 'work' },
+  aza_ship: { tool: 'aza_finish', action: 'ship' },
+  aza_loop_next: { tool: 'aza_loop', action: 'next' },
+  aza_auto_loop: { tool: 'aza_loop', action: '' },
+  aza_prd_generate: { tool: 'aza_prd', action: 'generate' },
+  aza_prd_validate: { tool: 'aza_prd', action: 'validate' },
+  aza_prd_review: { tool: 'aza_prd', action: 'review' },
+  aza_prd_approve: { tool: 'aza_prd', action: 'approve' },
+  aza_context_calibrate: { tool: 'aza_session', action: 'calibrate' },
+  aza_context_status: { tool: 'aza_session', action: 'status' },
+};
+
+/** Unified tool set (Set form for O(1) lookup, used by remapToolAction). */
+export const UNIFIED_TOOLS_SET = new Set<string>([
+  'aza_session',
+  'aza_prd',
+  'aza_loop',
+  'aza_spec',
+  'aza_quality',
+  'aza_finish',
+  'aza_memory',
+  'aza_meta',
+]);
+
+/**
+ * Map an old (tool, action) pair to a unified (tool, action).
+ * Returns null if no remap needed.
+ */
+export function remapToolAction(
+  tool: string,
+  action: string | undefined,
+): { tool: string; action: string } | null {
+  // Map orphan refine actions onto the 8-tool surface
+  if (action === 'refine') {
+    if (tool === 'aza_prd' || tool === 'aza_prd_review') {
+      return { tool: 'aza_prd', action: 'modify' };
+    }
+    if (tool === 'aza_spec' || tool === 'aza_task_design' || tool === 'aza_task_implement') {
+      return { tool: 'aza_spec', action: tool.includes('design') ? 'design' : 'implement' };
+    }
+    if (tool === 'aza_loop') {
+      return { tool: 'aza_loop', action: 'full' };
+    }
+  }
+  // Already unified → no remap
+  if (UNIFIED_TOOLS_SET.has(tool)) return null;
+  // Old composite name → map to canonical pair (preserve terminal actions)
+  const mapped = LEGACY_TOOL_MAP[tool];
+  if (mapped) {
+    const preserve = new Set(['wait', 'escalate', 'done', 'stop', 'report', 'retry']);
+    return {
+      tool: mapped.tool,
+      action: action && preserve.has(action) ? action : mapped.action,
+    };
+  }
+  return null;
+}
+
 /** Tools that mutate the workspace (write-guard). */
 export const UNIFIED_WRITE_TOOLS = new Set<string>([
   'aza_spec',

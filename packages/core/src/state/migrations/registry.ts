@@ -1,10 +1,10 @@
 /**
  * R10 第7轮 (D7)：迁移注册表 — 集中声明可用 schema 迁移。
  *
- * 原先 `state-manager.migrateState()` 通过动态 import 探测迁移文件，
- * 无法在调用前回答「支持哪些版本迁移」「是否需要迁移」等问题。
+ * `state-manager.migrateState()` 通过本注册表取得静态 transformer，
+ * 可在执行前回答「支持哪些版本迁移」「是否需要迁移」等问题。
  * 本注册表集中声明每个迁移的 from/to 版本与 transformer，
- * 供 `validateVersion()` / `loadWithMigration()` 等查询使用。
+ * 供生产 `load()` / `validateVersion()` 等查询使用。
  *
  * 添加新迁移时：
  *   1. 新建 `migrations/v{N}-to-v{N+1}.ts`，导出默认 transformer
@@ -12,13 +12,21 @@
  *   3. 在 state-manager.ts 提升 `CURRENT_STATE_VERSION`
  */
 
+import migrateV1ToV2 from './v1-to-v2';
+
+export type StateMigration = (
+  state: Record<string, unknown>,
+) => Record<string, unknown>;
+
 export interface MigrationDescriptor {
   /** 源 schema 版本（整数，对应 STATE.yaml.schema_version） */
   from: number;
   /** 目标 schema 版本 */
   to: number;
-  /** 迁移文件相对路径（供动态 import 使用） */
+  /** 迁移文件相对路径（用于诊断与审计） */
   modulePath: string;
+  /** Executable transformer. Static registration keeps bundlers deterministic. */
+  transformer: StateMigration;
   /** 该迁移做了什么（人类可读说明，便于审计） */
   description: string;
 }
@@ -33,6 +41,7 @@ export const MIGRATIONS: readonly MigrationDescriptor[] = [
     from: 1,
     to: 2,
     modulePath: './v1-to-v2',
+    transformer: migrateV1ToV2,
     description: 'Add schema_version=2 and pipeline.completion_gate.required_phases=[]',
   },
 ] as const;

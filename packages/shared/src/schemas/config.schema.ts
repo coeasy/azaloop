@@ -30,8 +30,21 @@ export const LoopConfigSchema = z.object({
   max_stage_iterations: z.number().int().default(20),
   /** Outer loop (sequential story batch over the board). Default on; set false to disable. */
   outer_enabled: z.boolean().default(true),
+  /** Full-auto spine: open stage may call aza_loop / aza_auto. */
+  full_auto: z.boolean().default(false),
   deadlock_threshold: z.number().int().default(3),
   hard_stop_on_security: z.boolean().default(true),
+});
+
+/**
+ * Autonomy levels (loop-engineering L1→L3).
+ * L1: report / draft PRD only — no production code writes via aza_spec(implement)
+ * L2: may write code; ship requires explicit approve / quality pass
+ * L3: unattended (auto approve PRD + auto ship when gates pass)
+ */
+export const AutonomyConfigSchema = z.object({
+  level: z.enum(['L1', 'L2', 'L3']).default('L2'),
+  auto_approve_prd: z.boolean().default(false),
 });
 
 export const QualityConfigSchema = z.object({
@@ -57,6 +70,7 @@ export const AzaloopConfigSchema = z.object({
   }),
   client: ClientConfigSchema.optional(),
   loop: LoopConfigSchema.default({}),
+  autonomy: AutonomyConfigSchema.default({}),
   memory: MemoryConfigSchema.default({}),
   quality: QualityConfigSchema.default({
     gates: { lint: true, test: true, regression: true, security: true, acceptance: true },
@@ -72,5 +86,6 @@ export const AzaloopConfigSchema = z.object({
 });
 
 export type AzaloopConfig = z.infer<typeof AzaloopConfigSchema>;
+export type AutonomyConfig = z.infer<typeof AutonomyConfigSchema>;
 export type ClientConfig = z.infer<typeof ClientConfigSchema>;
 export type MCPServerConfig = z.infer<typeof MCPServerConfigSchema>;

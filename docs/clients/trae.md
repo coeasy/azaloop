@@ -1,39 +1,33 @@
-# AzaLoop × Trae
+# Trae (`trae`)
 
-**Tier:** T1 Full | **MCP:** ✅ | **Hooks:** ✅ | **Auto-Loop:** ✅
+> Tier1: ✅ | Category: ide | Since: 0.1.0
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=trae`
+- `AZA_CLIENT_VERSION`
+
+## 安装步骤
+
+- 1. 安装 Trae (trae.ai)
+- 2. pnpm add -g @azaloop/mcp-server
+- 3. 在 Trae AI 助手设置 → MCP Server 添加
+- 4. 配置 aza mcp serve --client trae
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client trae
+aza mcp serve --client trae
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.trae/mcp.json` |
-| 规则文件 | `.trae/rules.md` |
+- `aza_session`
+- `aza_prd`
+- `aza_auto`
+- `aza_loop`
+- `aza_meta`
 
-### MCP 配置 `.trae/mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-在 Trae 聊天中输入需求，AzaLoop 自动执行五阶段开发循环。
-
-## Troubleshooting
-
-- 重启 Trae 使 MCP 配置生效
-- Trae 的 MCP 配置在项目级生效
+- 部分 next_action 需 ai run 显式调用

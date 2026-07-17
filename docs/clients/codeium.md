@@ -1,38 +1,27 @@
-# AzaLoop × Codeium
+# Codeium (`codeium`)
 
-**Tier:** T3 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ❌ (manual)
+> Tier1: ⚪ experimental | Category: ide | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=codeium`
+
+## 安装步骤
+
+- VSCode/IntelliJ 安装 Codeium 扩展
+- 启用 Cascade
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client codeium
+codeium --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.codeium/mcp.json` |
+- `aza_session`
+- `aza_loop`
 
-### MCP 配置 `.codeium/mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-Codeium 支持 MCP 协议，工具在聊天中自动可用。
-
-## Troubleshooting
-
-- 无 rules 文件支持
-- 需要手动跟踪循环
+- MCP 适配需 ≥ 1.5

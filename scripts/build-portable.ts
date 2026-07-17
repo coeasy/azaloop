@@ -307,6 +307,32 @@ async function createPortableZip() {
   console.log(`  ✓ ${zipPath}`);
 }
 
+/** Write SHA256SUMS.txt for portable artifacts (spec-kit reproducible bundles). */
+async function writeChecksums() {
+  const crypto = await import('crypto');
+  const lines: string[] = [];
+  const entries = await fs.readdir(DIST, { withFileTypes: true });
+  for (const e of entries) {
+    if (!e.isFile()) continue;
+    if (e.name === 'SHA256SUMS.txt') continue;
+    const fp = path.join(DIST, e.name);
+    const buf = await fs.readFile(fp);
+    const hash = crypto.createHash('sha256').update(buf).digest('hex');
+    lines.push(`${hash}  ${e.name}`);
+  }
+  const zipPath = path.join(ROOT, 'dist', 'azaloop-portable.zip');
+  try {
+    const zbuf = await fs.readFile(zipPath);
+    const zhash = crypto.createHash('sha256').update(zbuf).digest('hex');
+    lines.push(`${zhash}  ../azaloop-portable.zip`);
+  } catch {
+    /* zip may be missing on partial builds */
+  }
+  lines.sort();
+  await fs.writeFile(path.join(DIST, 'SHA256SUMS.txt'), lines.join('\n') + '\n', 'utf8');
+  console.log(`  ✓ SHA256SUMS.txt (${lines.length} entries)`);
+}
+
 async function main() {
   console.log(BANNER);
   console.log(`  Target: ${DIST}\n`);
@@ -354,6 +380,7 @@ async function main() {
   await copyAssets();
   await createInstallScripts();
   await createPortableZip();
+  await writeChecksums();
 
   // Cleanup bundles
   try { await fs.unlink(cliBundle); } catch {}
@@ -364,6 +391,7 @@ async function main() {
   console.log(`\n  ✅ Build complete!`);
   console.log(`  Output: ${DIST} (${size})`);
   console.log(`  Zip:    dist/azaloop-portable.zip`);
+  console.log(`  Checksums: ${path.join(DIST, 'SHA256SUMS.txt')}`);
   console.log(`
   To install:
     Windows:  .\\install.ps1

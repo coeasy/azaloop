@@ -1,45 +1,32 @@
-# AzaLoop × Claude Code
+# Claude Code (`claude-code`)
 
-**Tier:** T1 Full | **MCP:** ✅ | **Hooks:** ✅ | **Auto-Loop:** ✅
+> Tier1: ✅ | Category: cli | Since: 0.1.0
 
-## 快速开始
+## 环境变量
 
-```bash
-npx @azaloop/cli init --client claude-code
-```
+- `AZA_CLIENT_NAME=claude-code`
+- `ANTHROPIC_API_KEY`
 
-## 配置
+## 安装步骤
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.claude/mcp.json` |
-| 规则文件 | `CLAUDE.md` |
-| Agent | `.claude/agents/azaloop.json` |
+- 1. 安装 Claude Code (npm i -g @anthropic-ai/claude-code)
+- 2. 配置 ~/.claude/mcp.json 加入 aza mcp serve
+- 3. claude --mcp-server aza
 
-### MCP 配置 `.claude/mcp.json`
-
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
+## 启动命令
 
 ```bash
-cd your-project
-claude
-# 在 Claude Code 中：
-# "帮我创建一个 API 服务"
+claude --mcp-server "aza mcp serve"
 ```
 
-## Troubleshooting
+## 推荐工具
 
-- 确保 `CLAUDE.md` 在项目根目录
-- Claude Code 自动读取项目中配置的 MCP 服务器
+- `aza_session`
+- `aza_prd`
+- `aza_auto`
+- `aza_loop`
+- `aza_meta`
+
+## 已知限制
+
+- 仅支持 stdio MCP

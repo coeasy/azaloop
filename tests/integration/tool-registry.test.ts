@@ -1,5 +1,5 @@
 /**
- * v0.2 — Converged 8-tool registry integration test.
+ * vNext canonical 9-tool registry integration test.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -12,7 +12,6 @@ import {
   validateRegistryConsistency,
 } from '../../packages/mcp-server/src/tool-registry';
 import { RAW_HANDLERS, getRegistryErrors } from '../../packages/mcp-server/src/index';
-import { resolveToolCall } from '../../packages/mcp-server/src/legacy-router';
 
 const UNIFIED = [
   'aza_session',
@@ -26,8 +25,8 @@ const UNIFIED = [
   'aza_auto',
 ];
 
-describe('v0.2 converged tool-registry', () => {
-  it('exposes exactly 8 unified tools', () => {
+describe('vNext canonical tool-registry', () => {
+  it('exposes exactly 9 canonical tools', () => {
     expect(TOOL_REGISTRY.length).toBe(9);
     expect(getToolNames().sort()).toEqual([...UNIFIED].sort());
   });
@@ -52,14 +51,7 @@ describe('v0.2 converged tool-registry', () => {
     expect(getRegistryErrors().length).toBe(0);
   });
 
-  it('formatted list has 8 entries', () => {
+  it('formatted list has 9 entries', () => {
     expect(getFormattedToolDefinitions().length).toBe(9);
-  });
-
-  it('legacy names resolve to unified tools', () => {
-    expect(resolveToolCall('aza_prd_review', { title: 't', description: 'd' }).tool).toBe('aza_prd');
-    expect(resolveToolCall('aza_auto_loop', { action: 'full' }).tool).toBe('aza_loop');
-    expect(resolveToolCall('aza_finish_work', {}).tool).toBe('aza_finish');
-    expect(resolveToolCall('aza_quality_check', {}).tool).toBe('aza_quality');
   });
 });

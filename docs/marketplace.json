@@ -1,0 +1,596 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-16T16:25:17.662Z",
+  "clients": [
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "category": "ide",
+      "tier1": true,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=cursor",
+        "AZA_CLIENT_VERSION"
+      ],
+      "install": [
+        "1. 安装 Cursor IDE (cursor.com)",
+        "2. 安装 AzaLoop MCP server: pnpm add -g @azaloop/mcp-server",
+        "3. 在 Cursor 设置 → Features → Model Context Protocol 添加 server",
+        "4. 配置 stdio 启动: aza mcp serve"
+      ],
+      "launchCmd": "aza mcp serve --client cursor",
+      "primaryTools": [
+        "aza_session",
+        "aza_prd",
+        "aza_auto",
+        "aza_loop",
+        "aza_meta"
+      ],
+      "limitations": [
+        "Composer 不响应 next_action，需手动复制",
+        "没有 terminal 写入能力时降级到 file_write"
+      ],
+      "since": "0.1.0"
+    },
+    {
+      "id": "trae",
+      "name": "Trae",
+      "category": "ide",
+      "tier1": true,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=trae",
+        "AZA_CLIENT_VERSION"
+      ],
+      "install": [
+        "1. 安装 Trae (trae.ai)",
+        "2. pnpm add -g @azaloop/mcp-server",
+        "3. 在 Trae AI 助手设置 → MCP Server 添加",
+        "4. 配置 aza mcp serve --client trae"
+      ],
+      "launchCmd": "aza mcp serve --client trae",
+      "primaryTools": [
+        "aza_session",
+        "aza_prd",
+        "aza_auto",
+        "aza_loop",
+        "aza_meta"
+      ],
+      "limitations": [
+        "部分 next_action 需 ai run 显式调用"
+      ],
+      "since": "0.1.0"
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "category": "cli",
+      "tier1": true,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=opencode",
+        "AZA_CLIENT_VERSION"
+      ],
+      "install": [
+        "1. 编译 opencode (github.com/sst/opencode)",
+        "2. 配置 ~/.opencode/config.yaml 加入 aza mcp serve",
+        "3. 命令: opencode --mcp-server aza"
+      ],
+      "launchCmd": "opencode --mcp-server \"aza mcp serve\"",
+      "primaryTools": [
+        "aza_session",
+        "aza_prd",
+        "aza_auto",
+        "aza_loop",
+        "aza_meta"
+      ],
+      "limitations": [
+        "CLI 模式需要更多手动控制"
+      ],
+      "since": "0.1.0"
+    },
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "category": "cli",
+      "tier1": true,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=claude-code",
+        "ANTHROPIC_API_KEY"
+      ],
+      "install": [
+        "1. 安装 Claude Code (npm i -g @anthropic-ai/claude-code)",
+        "2. 配置 ~/.claude/mcp.json 加入 aza mcp serve",
+        "3. claude --mcp-server aza"
+      ],
+      "launchCmd": "claude --mcp-server \"aza mcp serve\"",
+      "primaryTools": [
+        "aza_session",
+        "aza_prd",
+        "aza_auto",
+        "aza_loop",
+        "aza_meta"
+      ],
+      "limitations": [
+        "仅支持 stdio MCP"
+      ],
+      "since": "0.1.0"
+    },
+    {
+      "id": "windsurf",
+      "name": "Windsurf",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=windsurf"
+      ],
+      "install": [
+        "安装 Windsurf → MCP → aza mcp serve"
+      ],
+      "launchCmd": "aza mcp serve --client windsurf",
+      "primaryTools": [
+        "aza_session",
+        "aza_auto",
+        "aza_loop"
+      ],
+      "limitations": [
+        "MCP 支持较新"
+      ],
+      "since": "0.1.1"
+    },
+    {
+      "id": "cline",
+      "name": "Cline",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=cline"
+      ],
+      "install": [
+        "VSCode + Cline 扩展 + 配置 mcpServers"
+      ],
+      "launchCmd": "claude-code --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "依赖 VSCode"
+      ],
+      "since": "0.1.1"
+    },
+    {
+      "id": "aider",
+      "name": "Aider",
+      "category": "cli",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=aider"
+      ],
+      "install": [
+        "pip install aider-chat + 配置 --mcp-server"
+      ],
+      "launchCmd": "aider --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "CLI 模式"
+      ],
+      "since": "0.1.1"
+    },
+    {
+      "id": "continue",
+      "name": "Continue",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=continue"
+      ],
+      "install": [
+        "VSCode + Continue + config.yaml"
+      ],
+      "launchCmd": "continue --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "依赖 VSCode"
+      ],
+      "since": "0.1.1"
+    },
+    {
+      "id": "zed",
+      "name": "Zed",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=zed"
+      ],
+      "install": [
+        "Zed + extension + mcp 配置"
+      ],
+      "launchCmd": "zed --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "MCP 实验阶段"
+      ],
+      "since": "0.1.1"
+    },
+    {
+      "id": "roo-code",
+      "name": "Roo Code (Cline fork)",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=roo-code"
+      ],
+      "install": [
+        "VSCode + Roo Code + mcpServers"
+      ],
+      "launchCmd": "claude-code --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "VSCode 依赖"
+      ],
+      "since": "0.1.1"
+    },
+    {
+      "id": "gemini-cli",
+      "name": "Gemini CLI",
+      "category": "cli",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=gemini-cli",
+        "GOOGLE_API_KEY"
+      ],
+      "install": [
+        "npm i -g @google/gemini-cli",
+        "配置 ~/.gemini/settings.json 加入 mcpServers"
+      ],
+      "launchCmd": "gemini --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_auto",
+        "aza_loop"
+      ],
+      "limitations": [
+        "MCP 实验阶段"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "github-copilot",
+      "name": "GitHub Copilot",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=github-copilot",
+        "GH_TOKEN"
+      ],
+      "install": [
+        "VSCode + Copilot Chat 扩展 + 启用 MCP 协议"
+      ],
+      "launchCmd": "copilot --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "MCP 协议需 Copilot Chat ≥ 0.18"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "claude-desktop",
+      "name": "Claude Desktop",
+      "category": "desktop",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=claude-desktop",
+        "ANTHROPIC_API_KEY"
+      ],
+      "install": [
+        "安装 Claude Desktop (claude.com/download)",
+        "编辑 claude_desktop_config.json 加入 mcpServers"
+      ],
+      "launchCmd": "claude-desktop --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_auto",
+        "aza_loop"
+      ],
+      "limitations": [
+        "仅 macOS/Windows"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "comate",
+      "name": "Comate (百度文心)",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=comate"
+      ],
+      "install": [
+        "VSCode/IntelliJ 安装 Comate 扩展",
+        "启用 MCP 模式"
+      ],
+      "launchCmd": "comate --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "国内 LLM 接入",
+        "MCP 适配需 ≥ 3.2"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "qwen-code",
+      "name": "Qwen Code (通义灵码)",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=qwen-code",
+        "DASHSCOPE_API_KEY"
+      ],
+      "install": [
+        "VSCode/JetBrains 安装 Lingma 扩展",
+        "切换 Qwen Code 模式"
+      ],
+      "launchCmd": "qwen-code --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "国内 token 走 DashScope"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "openhands",
+      "name": "OpenHands",
+      "category": "cloud",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=openhands",
+        "OPENHANDS_API_KEY"
+      ],
+      "install": [
+        "docker pull allhandsai/openhands",
+        "配置 runtime 挂载 aza mcp"
+      ],
+      "launchCmd": "openhands --mcp-server \"aza mcp serve\"",
+      "primaryTools": [
+        "aza_session",
+        "aza_auto",
+        "aza_loop",
+        "aza_meta"
+      ],
+      "limitations": [
+        "云端 runtime",
+        "需 Docker"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "droid",
+      "name": "Droid (Factory)",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=droid"
+      ],
+      "install": [
+        "factory.ai 安装 Droid 扩展",
+        "配置 MCP server"
+      ],
+      "launchCmd": "droid --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "macOS only"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "goose",
+      "name": "Goose (Block)",
+      "category": "cli",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=goose"
+      ],
+      "install": [
+        "pip install goose-ai",
+        "配置 ~/.config/goose/config.yaml"
+      ],
+      "launchCmd": "goose session --with-mcp aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_auto",
+        "aza_loop"
+      ],
+      "limitations": [
+        "CLI 模式"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "kiro",
+      "name": "Kiro",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=kiro"
+      ],
+      "install": [
+        "VSCode 安装 Kiro 扩展",
+        "配置 mcpServers"
+      ],
+      "launchCmd": "kiro --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "MCP 实验阶段"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "hermes",
+      "name": "Hermes (Nous Research)",
+      "category": "cli",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=hermes",
+        "NOUS_API_KEY"
+      ],
+      "install": [
+        "pip install hermes-agent",
+        "配置 ~/.hermes/mcp.json"
+      ],
+      "launchCmd": "hermes --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "CLI 模式"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "workbuddy",
+      "name": "Workbuddy",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=workbuddy"
+      ],
+      "install": [
+        "VSCode 安装 Workbuddy 扩展",
+        "配置 mcpServers"
+      ],
+      "launchCmd": "workbuddy --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "团队版限制"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "vscode",
+      "name": "VSCode (Continue/Copilot)",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=vscode"
+      ],
+      "install": [
+        "VSCode + Continue 或 Copilot + mcpServers"
+      ],
+      "launchCmd": "code --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "依赖扩展"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "codex-cli",
+      "name": "Codex CLI (OpenAI)",
+      "category": "cli",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=codex-cli",
+        "OPENAI_API_KEY"
+      ],
+      "install": [
+        "npm i -g @openai/codex",
+        "配置 ~/.codex/config.toml"
+      ],
+      "launchCmd": "codex --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_auto",
+        "aza_loop"
+      ],
+      "limitations": [
+        "CLI 模式"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "codeium",
+      "name": "Codeium",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=codeium"
+      ],
+      "install": [
+        "VSCode/IntelliJ 安装 Codeium 扩展",
+        "启用 Cascade"
+      ],
+      "launchCmd": "codeium --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "MCP 适配需 ≥ 1.5"
+      ],
+      "since": "0.1.2"
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "category": "ide",
+      "tier1": false,
+      "requiredEnv": [
+        "AZA_CLIENT_NAME=openclaw"
+      ],
+      "install": [
+        "OpenClaw 桌面 + 配置 MCP"
+      ],
+      "launchCmd": "openclaw --mcp-server aza",
+      "primaryTools": [
+        "aza_session",
+        "aza_loop"
+      ],
+      "limitations": [
+        "实验性"
+      ],
+      "since": "0.1.2"
+    }
+  ],
+  "summary": {
+    "total": 25,
+    "tier1": 4,
+    "byCategory": {
+      "ide": 16,
+      "cli": 7,
+      "desktop": 1,
+      "cloud": 1
+    }
+  }
+}

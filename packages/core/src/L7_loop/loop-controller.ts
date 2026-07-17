@@ -32,6 +32,26 @@ import type { AzaloopConfig } from '@azaloop/shared';
 import type { PRD } from '@azaloop/shared';
 import * as path from 'path';
 import { TokenBudget, type BudgetAction } from './token-budget';
+// R12 P6 Plus (P2 退出标准): 主编排 + 阶段执行 拆分为独立子模块
+import { NextOrchestrator } from './runtime/next-orchestrator';
+import { PhaseHandler } from './runtime/phase-handler';
+// R12 P6 Plus2 (P2 退出标准): 状态同步 + 审计评估 + OuterLoop + V11 拆分为独立子模块
+import { StateSync } from './runtime/state-sync';
+import { AuditEvaluator } from './runtime/audit-evaluator';
+import { OuterLoopRunner } from './runtime/outer-loop-runner';
+import { NextV11 } from './runtime/next-v11';
+// R12 P6 Plus3 (P2 退出标准): 生命周期 + 响应构造 拆分为独立子模块
+import { LifecycleHandler } from './runtime/lifecycle-handler';
+import { ResponseBuilder } from './runtime/response-builder';
+// R12 P6 Plus4 (P2 退出标准): 纯函数路由 + 可观察外观 + hook 管理 + 回调桥接 拆分为独立子模块
+import { resolveRoute } from './runtime/route-resolver';
+import { ObservableFacade } from './runtime/observable-facade';
+import { HookManager } from './runtime/hook-manager';
+import { CallbackBridge } from './runtime/callback-bridge';
+// R12 P6 Plus5 (P2 退出标准强化): V12 子系统初始化拆分为独立工厂
+import { SubsystemInitializer } from './runtime/subsystem-initializer';
+// R12 P6 Plus6 (P2 退出标准强化): 11 个 submodule 依赖注入装配拆分为工厂
+import { SubmoduleWiring } from './runtime/submodule-wiring';
 
 export interface LoopControllerOptions {
   maxIterations?: number;
@@ -103,6 +123,10 @@ export class LoopController {
   stopHookActive: boolean = false;
   /** V12: Ledger progress tracking (no longer hardcoded) */
   ledgerHasProgress: boolean = false;
+  /** R12 P6 Plus4: Context bundle (from options) — used by callback bridge for handler provider */
+  readonly contextBundle: ContextEntryBundle | null;
+  /** R12 P6 Plus4: Knowledge entries (from options) — used by callback bridge for handler provider */
+  readonly knowledgeEntries: string[];
 
   /** OuterLoop controller for Story-level scheduling */
   private outerLoop: OuterLoop | null = null;
@@ -132,6 +156,30 @@ export class LoopController {
   /** 二维进度账本（stage × iteration），用于崩溃恢复和无进展检测 */
   private ledger2d: ProgressLedger2D = new ProgressLedger2D();
 
+  /** R12 P6 Plus: 主编排器（next() 拆分目标） */
+  private orchestrator: NextOrchestrator | null = null;
+  /** R12 P6 Plus: 阶段执行器（nextV12 拆分目标） */
+  private phaseHandler: PhaseHandler | null = null;
+  /** R12 P6 Plus2: 状态同步器（syncStateFromFile/ToFile/buildLoopMarkdown 拆分目标） */
+  private stateSync: StateSync | null = null;
+  /** R12 P6 Plus2: 审计评估器（audit() 拆分目标） */
+  private auditEvaluator: AuditEvaluator | null = null;
+  /** R12 P6 Plus2: OuterLoop 运行器（runOuterLoop/advanceBoard/buildResponse 拆分目标） */
+  private outerLoopRunner: OuterLoopRunner | null = null;
+  /** R12 P6 Plus2: V11 兼容路径（nextV11 拆分目标） */
+  private nextV11Runner: NextV11 | null = null;
+  /** R12 P6 Plus3: 生命周期处理器 */
+  private lifecycleHandler: LifecycleHandler | null = null;
+  /** R12 P6 Plus3: 响应构建器 */
+  private responseBuilder: ResponseBuilder | null = null;
+  /** R12 P6 Plus4: 纯函数路由（无需实例，引用 resolveRoute 函数即可） */
+  /** R12 P6 Plus4: 可观察外观（worker scheduler 桥接） */
+  private observableFacade: ObservableFacade | null = null;
+  /** R12 P6 Plus4: hook 管理（block count / stop hook / ledger progress） */
+  private hookManager: HookManager | null = null;
+  /** R12 P6 Plus4: 回调桥接（OuterLoop callbacks + handler provider 构造） */
+  private callbackBridge: CallbackBridge | null = null;
+
   readonly options: LoopControllerOptions;
   private conditions: Map<GuardConditionKey, boolean> = new Map();
   private stageIterations: Map<string, number> = new Map();
@@ -159,7 +207,15 @@ export class LoopController {
       effectiveConfig = {
         version: '4.0',
         project: { name: 'azaloop', root: '.' },
-        loop: { max_iterations: 50, max_stage_iterations: 20, outer_enabled: true, deadlock_threshold: 3, hard_stop_on_security: true },
+        loop: {
+          max_iterations: 50,
+          max_stage_iterations: 20,
+          outer_enabled: true,
+          full_auto: false,
+          deadlock_threshold: 3,
+          hard_stop_on_security: true,
+        },
+        autonomy: { level: 'L2', auto_approve_prd: false },
         memory: { enabled: true, episodic_max: 100, compression_threshold: 50 },
         quality: { gates: { lint: true, test: true, regression: true, security: true, acceptance: true } },
         rules: [],
@@ -170,6 +226,8 @@ export class LoopController {
     this.config = effectiveConfig;
 
     this.options = options;
+    this.contextBundle = options.contextBundle ?? null;
+    this.knowledgeEntries = options.knowledgeEntries ?? [];
     // R10: maxStageIterations 配置化（9.8.4-2）。优先级：
     // 显式 options.maxStageIterations > AZA_MAX_STAGE_ITERATIONS 环境变量 > azaloop.yaml loop.max_stage_iterations > 默认 20
     const envMaxStage = Number(process.env.AZA_MAX_STAGE_ITERATIONS);
@@ -189,118 +247,133 @@ export class LoopController {
       azaDir: options.azaDir ?? '',
       enableOuterLoop: options.enableOuterLoop ?? false,
     };
-    this.stateMachine = new StateMachine();
-    this.guards = createDefaultGuards((key) => this.conditions.get(key) === true);
-    this.deadlockDetector = new DeadlockDetector(this.configLoopOptions.deadlockThreshold);
-    this.hardStop = new HardStopManager();
-    this.strikeSystem = new StrikeSystem(this.configLoopOptions.maxStrikes);
-    this.circuitBreaker = new CircuitBreaker({
-      maxIterations: this.configLoopOptions.maxIterations,
-      stagnationThreshold: 3,
-      noProgressThreshold: 5,
-    });
-    this.completionGate = new CompletionGate();
-    this.auditor = new LoopAudit();
-
-    // V12: Initialize Decision Point registry for DP-0 to DP-7 protocol
-    // (must be initialized before innerLoop creation since innerLoop passes it to PhaseLoop)
-    const auditLogPath = this.configLoopOptions.azaDir
-      ? path.join(this.configLoopOptions.azaDir, 'audit.jsonl')
-      : undefined;
-    this.dpRegistry = new DecisionPointRegistry(auditLogPath);
-    // Load existing DP history from audit log for session recovery
-    if (auditLogPath) {
-      this.dpRegistry.loadFromAudit(auditLogPath).catch(() => {
-        // best-effort: missing audit log is non-fatal
-      });
-    }
-
-    this.innerLoop = new InnerLoop(this.circuitBreaker, {
-      maxPhaseIterations: this.configLoopOptions.maxStageIterations,
-      dpRegistry: this.dpRegistry,
-    }, this.stateMachine);
-
-    // V12: Initialize REAL handler provider (gates on actual PRD checks,
-    // type-check, test runs, secret scanning and artifact existence —
-    // never hardcoded/simulated metrics). The project source lives in the
-    // parent of `.aza`, so derive workDir from azaDir.
-    const workDir = this.configLoopOptions.azaDir ? path.dirname(this.configLoopOptions.azaDir) : undefined;
-    this.handlerProvider = createRealHandlerProvider({
-      workDir,
-      azaDir: this.configLoopOptions.azaDir || undefined,
+    // R12 P6 Plus5: 委托 SubsystemInitializer 执行 V12 子系统初始化
+    // 7 个核心子系统 + DP registry + inner loop + handler provider
+    // + 持久化（stateManager/runStateManager/auditLog/tokenBudget）
+    // + 注入（contextOrchestrator/injectionEngine/resumeGen/runLedger/filePersistor/dlpDetector）
+    // + OuterLoop + crash recovery
+    const initializer = new SubsystemInitializer({
+      config: this.configLoopOptions,
+      tokenBudget: options.tokenBudget,
       checkerCache: this.checkerCache,
+      contextBundle: this.contextBundle,
+      knowledgeEntries: this.knowledgeEntries,
+      conditions: this.conditions,
+      stageIterations: this.stageIterations,
+      ledger2d: this.ledger2d,
+      setBlockCount: (n) => { this.blockCount = n; },
+      setLedgerHasProgress: (v) => { this.ledgerHasProgress = v; },
+      setStopHookActive: (v) => { this.stopHookActive = v; },
     });
-    // Share the freshly-initialized real handler provider with the
-    // inner loop so the 5 phase handlers can dispatch through it.
-    this.innerLoop.setHandlerProvider(this.handlerProvider);
+    const core = initializer.initCore();
+    this.stateMachine = core.stateMachine;
+    this.guards = core.guards;
+    this.deadlockDetector = core.deadlockDetector;
+    this.hardStop = core.hardStop;
+    this.strikeSystem = core.strikeSystem;
+    this.circuitBreaker = core.circuitBreaker;
+    this.completionGate = core.completionGate;
+    this.auditor = core.auditor;
+    const v12 = initializer.initV12(core);
+    this.dpRegistry = v12.dpRegistry;
+    this.innerLoop = v12.innerLoop;
+    this.handlerProvider = v12.handlerProvider;
+    const persistence = initializer.initPersistence();
+    this.stateManager = persistence.stateManager;
+    this.runStateManager = persistence.runStateManager;
+    this.auditLog = persistence.auditLog;
+    this.tokenBudget = persistence.tokenBudget;
+    const injection = initializer.initInjection(this.auditLog);
+    this.contextOrchestrator = injection.contextOrchestrator;
+    this.injectionEngine = injection.injectionEngine;
+    this.resumeGen = injection.resumeGen;
+    this.runLedger = injection.runLedger;
+    this.filePersistor = injection.filePersistor;
+    this.dlpDetector = injection.dlpDetector;
+    this.outerLoop = initializer.initOuterLoop(this.innerLoop);
+    initializer.recoverLedger();
 
-    // V12: Initialize StateManager for file synchronization
-    if (this.configLoopOptions.azaDir) {
-      this.stateManager = new StateManager(this.configLoopOptions.azaDir);
-      // Initialize RunStateManager for machine-owned state (comet pattern)
-      const projectRoot = this.configLoopOptions.azaDir
-        ? path.dirname(this.configLoopOptions.azaDir)
-        : process.cwd();
-      this.runStateManager = new RunStateManager(this.configLoopOptions.azaDir, projectRoot);
-      this.runStateManager.load().catch(() => {
-        // best-effort: missing run-state is non-fatal
-      });
-      // Initialize AuditLog for append-only state transitions (comet pattern)
-      this.auditLog = new AuditLog(this.configLoopOptions.azaDir);
-    }
-
-    // V20 Task 4: Initialize TokenBudget (hard cap on per-task & per-session usage)
-    this.tokenBudget = options.tokenBudget ?? new TokenBudget('L2');
-
-    // V12: Initialize ContextOrchestrator for per-stage JSONL context injection
-    if (this.configLoopOptions.azaDir) {
-      this.contextOrchestrator = new ContextOrchestrator(this.configLoopOptions.azaDir, this.tokenBudget);
-    }
-    // V12: Initialize InjectionEngine for stage-specific knowledge
-    this.injectionEngine = new InjectionEngine();
-
-    // Initialize ResumeGenerator for run-ledger access
-    if (this.configLoopOptions.azaDir) {
-      this.resumeGen = new ResumeGenerator(this.configLoopOptions.azaDir);
-      // R10 第2轮 (D1)：初始化 RunLedger 并异步加载历史条目，
-      // 供 DLP 链式检测、上下文恢复等场景使用。load() 失败非致命。
-      this.runLedger = new RunLedger(this.configLoopOptions.azaDir);
-      this.runLedger.load().catch(() => {
-        // best-effort: missing run-ledger.jsonl is non-fatal
-      });
-      // R10 第3轮 (D3)：初始化 FilePersistor，主循环每轮 checkpoint
-      // 通过 persistCheckpoint() 持久化 loop.md 并验证所有产物。
-      this.filePersistor = new FilePersistor(this.configLoopOptions.azaDir);
-    }
-
-    // V20 Task 11: Initialize DLP chain detector
-    if (this.configLoopOptions.azaDir) {
-      this.dlpDetector = new DlpChainDetector();
-    }
-
-    // Initialize OuterLoop if enabled — pass shared InnerLoop so
-    // both loops observe the same StateMachine instance.
-    if (this.configLoopOptions.enableOuterLoop) {
-      this.outerLoop = new OuterLoop(this.circuitBreaker, {
-        maxCycles: this.configLoopOptions.maxIterations,
-        requireHumanGate: true,
-        enableCircuitBreaker: true,
-      }, this.innerLoop);
-    }
-
-    // Crash recovery: restore the 2D progress ledger from
-    // `<azaDir>/ledger.json` if a previous session persisted one.
-    if (this.configLoopOptions.azaDir) {
-      try {
-        const ledgerPath = path.join(this.configLoopOptions.azaDir, 'ledger.json');
-        if (fs.existsSync(ledgerPath)) {
-          const raw = fs.readFileSync(ledgerPath, 'utf8');
-          this.ledger2d.deserialize(raw);
-        }
-      } catch {
-        // best-effort: a missing or corrupt ledger is non-fatal
-      }
-    }
+    // R12 P6 Plus6: 委托 SubmoduleWiring 执行 11 个 submodule 依赖注入装配
+    // 两阶段装配：wireLeaves() → 9 个 leaf submodules；wireHubs() → 2 个 hub submodules
+    const wiring = new SubmoduleWiring({
+      // ── Subsystems ──
+      stateMachine: this.stateMachine,
+      guards: this.guards,
+      deadlockDetector: this.deadlockDetector,
+      hardStop: this.hardStop,
+      strikeSystem: this.strikeSystem,
+      circuitBreaker: this.circuitBreaker,
+      completionGate: this.completionGate,
+      auditor: this.auditor,
+      innerLoop: this.innerLoop,
+      dpRegistry: this.dpRegistry,
+      handlerProvider: this.handlerProvider,
+      dlpDetector: this.dlpDetector,
+      runLedger: this.runLedger,
+      resumeGen: this.resumeGen,
+      contextOrchestrator: this.contextOrchestrator,
+      injectionEngine: this.injectionEngine,
+      auditLog: this.auditLog,
+      stateManager: this.stateManager,
+      runStateManager: this.runStateManager,
+      tokenBudget: this.tokenBudget,
+      filePersistor: this.filePersistor,
+      outerLoop: this.outerLoop,
+      ledger2d: this.ledger2d,
+      // ── Configuration ──
+      config: this.config,
+      configLoopOptions: this.configLoopOptions,
+      projectRoot: this.options.projectRoot,
+      contextBundle: this.contextBundle,
+      knowledgeEntries: this.knowledgeEntries,
+      // ── State ──
+      blockCount: this.blockCount,
+      stopHookActive: this.stopHookActive,
+      ledgerHasProgress: this.ledgerHasProgress,
+      driftDetected: this.driftDetected,
+      conditions: this.conditions,
+      stageIterations: this.stageIterations,
+      checkerCache: this.checkerCache,
+      lastHashes: this.lastHashes,
+      lastPrd: this.lastPrd,
+      lastContract: this.lastContract,
+      // ── Setters ──
+      setBlockCount: (n) => { this.blockCount = n; },
+      setLedgerHasProgress: (v) => { this.ledgerHasProgress = v; },
+      setStopHookActive: (v) => { this.stopHookActive = v; },
+      setLastHashes: (h) => { this.lastHashes = h; },
+      setLastPrd: (p) => { this.lastPrd = p; },
+      setLastContract: (c) => { this.lastContract = c; },
+      setDriftDetected: (v) => { this.driftDetected = v; },
+      setHandlerProvider: (p) => this.setHandlerProvider(p),
+      // ── Controller method bridges ──
+      syncStateFromFile: () => this.syncStateFromFile(),
+      syncStateToFile: () => this.syncStateToFile(),
+      notifyStageAdvance: (s) => this.notifyStageAdvance(s),
+      notifyStrike: (r) => this.notifyStrike(r),
+      notifyCompletion: () => this.notifyCompletion(),
+      markLedgerProgress: () => this.markLedgerProgress(),
+      buildResponse: (stage, action, hard, level, awaiting) =>
+        this.buildResponse(stage, action, hard, level, awaiting),
+      getStageEntryAction: (s) => this.getStageEntryAction(s),
+      dispatchV12: (cs) => this.dispatchV12(cs),
+      dispatchV11: (cs) => this.dispatchV11(cs),
+    });
+    const leaves = wiring.wireLeaves();
+    this.responseBuilder = leaves.responseBuilder;
+    this.lifecycleHandler = leaves.lifecycleHandler;
+    this.nextV11Runner = leaves.nextV11Runner;
+    this.outerLoopRunner = leaves.outerLoopRunner;
+    this.auditEvaluator = leaves.auditEvaluator;
+    this.stateSync = leaves.stateSync;
+    this.observableFacade = leaves.observableFacade;
+    this.hookManager = leaves.hookManager;
+    this.callbackBridge = leaves.callbackBridge;
+    const hubs = wiring.wireHubs({
+      outerLoopRunner: () => this.outerLoopRunner,
+    });
+    this.orchestrator = hubs.orchestrator;
+    this.phaseHandler = hubs.phaseHandler;
   }
 
   // ── V12: Handler provider injection ──
@@ -314,38 +387,9 @@ export class LoopController {
 
   // ── C13: OuterLoop callbacks ──
 
-  /** OuterLoop callbacks for Story-level scheduling */
-  private outerLoopCallbacks: {
-    storyProvider: StoryProvider;
-    humanGate: HumanGateFn;
-    commit: CommitFn;
-  } | null = null;
-
-  /**
-   * V20 Task 6: 纯函数路由 — 所有路由决策集中在此，无 LLM 调用。
-   * 输入：当前 stage + 状态标志
-   * 输出：下一步 NextAction 或 null（null = 继续当前 stage）
-   */
-  private deterministicRoute(
-    stage: Stage,
-    ctx: {
-      hardStopped: boolean;
-      breakerTripped: boolean;
-      iterExceeded: boolean;
-      strikeHardStop: boolean;
-      budgetAction: BudgetAction;
-    },
-  ): NextAction | null {
-    if (ctx.hardStopped) return { tool: 'aza_loop', action: 'report', reason: 'Hard stop' };
-    if (ctx.breakerTripped) return { tool: 'aza_loop', action: 'escalate', reason: 'Circuit breaker tripped' };
-    if (ctx.iterExceeded) return { tool: 'aza_loop', action: 'stop', reason: 'Max iterations' };
-    if (ctx.strikeHardStop) return { tool: 'aza_loop', action: 'escalate', reason: '3-Strike' };
-    if (ctx.budgetAction === 'stop') return { tool: 'aza_loop', action: 'stop', reason: 'Token budget exhausted' };
-    return null;
-  }
-
   /**
    * 设置 OuterLoop 回调。
+   * R12 P6 Plus4: 委托到 runtime/callback-bridge.ts。
    * OuterLoop 需要 StoryProvider/HumanGate/Commit 等外部回调。
    * 如果不设置，将使用默认实现从 STATE.yaml 读取 Story 并自动批准。
    */
@@ -354,12 +398,13 @@ export class LoopController {
     humanGate: HumanGateFn;
     commit: CommitFn;
   }): void {
-    this.outerLoopCallbacks = callbacks;
+    this.callbackBridge?.setOuterLoopCallbacks(callbacks);
   }
 
   // ── v13: WorkerScheduler wiring (P1.1) ──
 
   /**
+   * R12 P6 Plus4: thin shell — 委托到 runtime/observable-facade.ts。
    * Worker scheduler (ruflo 12 workers + 270s heartbeat) that should
    * receive `emitStageAdvance` / `emitStrike` / `emitCompletion` events
    * from this loop controller. Set once at engine construction.
@@ -368,1233 +413,183 @@ export class LoopController {
    * background observation layer (used by tests and CLI single-shot
    * commands that don't need the overhead of 12 timers).
    */
-  private workerScheduler: import('../L0_platform/workers').WorkerScheduler | null = null;
-
-  /**
-   * Last stage the loop controller observed during `syncStateFromFile`.
-   * Used to fire `emitStageAdvance` when the stage transitions. We use
-   * a marker (not a getter) so test setup can seed the value.
-   */
-  private lastObservedStage: Stage | null = null;
-
   setWorkerScheduler(scheduler: import('../L0_platform/workers').WorkerScheduler | null): void {
-    this.workerScheduler = scheduler;
+    this.observableFacade?.setScheduler(scheduler);
   }
 
   /**
-   * v13 — P1.1: notify the worker scheduler of a stage transition.
+   * v13 — P1.1: thin shell — 业务实现全部在 runtime/observable-facade.ts。
    * Called by `syncStateFromFile` whenever the loaded stage differs
    * from the last observed stage. Safe to call when no scheduler is
    * wired (no-op). Schedulers without `on-stage-advance` workers simply
    * log the event without running anything.
    */
   private notifyStageAdvance(newStage: Stage): void {
-    if (!this.workerScheduler) return;
-    if (this.lastObservedStage === newStage) return;
-    this.lastObservedStage = newStage;
-    try {
-      this.workerScheduler.emitStageAdvance(newStage);
-    } catch {
-      // best-effort: a misbehaving worker never blocks the loop
-    }
+    if (!this.observableFacade) return;
+    this.observableFacade.notifyStageAdvance(newStage);
   }
 
   /**
-   * v13 — P1.1: notify the worker scheduler that a strike was recorded.
+   * v13 — P1.1: thin shell — 业务实现全部在 runtime/observable-facade.ts。
    * Called from the strike system fan-out. `deepdive` is the canonical
    * `on-strike` worker and will produce a root-cause report.
    */
   notifyStrike(reason: string): void {
-    if (!this.workerScheduler) return;
-    try {
-      this.workerScheduler.emitStrike(reason);
-    } catch {
-      // best-effort
-    }
+    if (!this.observableFacade) return;
+    this.observableFacade.notifyStrike(reason);
   }
 
   /**
-   * v13 — P1.1: notify the worker scheduler that the loop completed.
+   * v13 — P1.1: thin shell — 业务实现全部在 runtime/observable-facade.ts。
    * `document` / `audit` / `benchmark` are the canonical `on-completion`
    * workers and will produce final summary reports.
    */
   notifyCompletion(): void {
-    if (!this.workerScheduler) return;
-    try {
-      this.workerScheduler.emitCompletion();
-    } catch {
-      // best-effort
-    }
+    if (!this.observableFacade) return;
+    this.observableFacade.notifyCompletion();
   }
 
   // ── V12: Block count & stop hook tracking (no longer hardcoded) ──
 
   incrementBlockCount(): void {
-    this.blockCount++;
-    this.ledgerHasProgress = false;
+    this.hookManager?.incrementBlockCount();
   }
 
   resetBlockCount(): void {
-    this.blockCount = 0;
-    this.ledgerHasProgress = true;
+    this.hookManager?.resetBlockCount();
   }
 
   setStopHook(active: boolean): void {
-    this.stopHookActive = active;
+    this.hookManager?.setStopHook(active);
   }
 
   markLedgerProgress(): void {
-    this.ledgerHasProgress = true;
+    this.hookManager?.markLedgerProgress();
   }
 
   // ── V12: State synchronization (StateMachine ↔ StateManager) ──
 
-  /**
-   * Load file state from STATE.yaml into memory StateMachine.
-   * Call at the start of next() to ensure cross-session consistency.
-   */
+  /** R12 P6 Plus2: thin shell → runtime/state-sync.ts */
   async syncStateFromFile(): Promise<void> {
-    if (!this.stateManager) return;
-    try {
-      const fileState = await this.stateManager.load();
-      let stage = fileState.pipeline.current_stage as Stage;
-      // Heal drift: blocked/in_progress stage wins over stale pipeline.current_stage
-      const stages = fileState.pipeline.stages as Record<Stage, any>;
-      const order: Stage[] = ['open', 'design', 'build', 'verify', 'archive'];
-      for (const s of order) {
-        if (stages[s]?.status === 'blocked') { stage = s; break; }
-      }
-      if (stage === fileState.pipeline.current_stage) {
-        for (const s of order) {
-          if (stages[s]?.status === 'in_progress') { stage = s; break; }
-        }
-      }
-      const phaseCurrent = (fileState.loops as any)?.phase?.current as Stage | undefined;
-      if (stage === fileState.pipeline.current_stage && phaseCurrent && stages[phaseCurrent]?.status !== 'completed') {
-        stage = phaseCurrent;
-      }
-      // Mutate in place — do NOT reassign — so InnerLoop/OuterLoop keep
-      // observing the same shared StateMachine instance.
-      this.stateMachine.loadState({
-        current_stage: stage,
-        stages: fileState.pipeline.stages as Record<Stage, any>,
-        iteration: fileState.loop.iteration,
-        progress: fileState.loop.progress,
-        loops: fileState.loops as any,
-        attestation: fileState.attestation || { verified: true },
-      });
-      // v13 — P1.1: notify the worker scheduler of a stage transition.
-      // This fans out to `on-stage-advance` workers (consolidate, map,
-      // preload, refactor) which produce background reports.
-      this.notifyStageAdvance(stage);
-    } catch {
-      // File doesn't exist yet — use default state
-    }
-
-    // ── CP1 drift detection (V20 Task 12: content-level diff):
-    //    哈希变化时调 diffPrd/diffContract，hasMaterialChange 才触发 drift ──
-    if (this.configLoopOptions.azaDir) {
-      const newHashes: { prd?: string; contract?: string } = {};
-      let currentPrd: PRD | null = null;
-      let currentContract: string = '';
-      
-      try {
-        const prdPath = path.join(this.configLoopOptions.azaDir, 'prd.json');
-        if (fs.existsSync(prdPath)) {
-          const prdContent = fs.readFileSync(prdPath, 'utf8');
-          newHashes.prd = contentHash(prdContent);
-          try {
-            currentPrd = JSON.parse(prdContent);
-          } catch { /* parse error */ }
-        }
-      } catch { /* best-effort */ }
-      
-      try {
-        const contractPath = path.join(this.configLoopOptions.azaDir, 'contract.md');
-        if (fs.existsSync(contractPath)) {
-          const contractContent = fs.readFileSync(contractPath, 'utf8');
-          newHashes.contract = contentHash(contractContent);
-          currentContract = contractContent;
-        }
-      } catch { /* best-effort */ }
-
-      // V20 Task 12: 内容差异分析（非哈希）
-      if (this.lastHashes.prd && newHashes.prd && this.lastHashes.prd !== newHashes.prd) {
-        if (this.lastPrd && currentPrd) {
-          const diff = diffPrd(this.lastPrd, currentPrd);
-          if (hasMaterialChange(diff)) {
-            this.driftDetected = true;
-          } else {
-            // R10 第2轮 (D2)：差异小但确实变了，写入 audit.jsonl 作为 minor_drift
-            // 记录。原先只是占位注释——导致 PRD 微调完全无审计痕迹。
-            this.auditLog?.append({
-              type: 'minor_drift',
-              source: 'prd_content_diff',
-              before: { sha: this.lastHashes.prd },
-              after: { sha: newHashes.prd },
-              details: {
-                target: 'prd',
-                fieldCount: diff.fields.length,
-                overallChangeRatio: diff.overallChangeRatio,
-                fields: diff.fields.map(f => ({ field: f.field, changeRatio: f.changeRatio })),
-                material: false,
-              },
-            }).catch(() => { /* best-effort: audit log failure is non-fatal */ });
-          }
-        } else {
-          // 无法解析 PRD，回退到哈希比对
-          this.driftDetected = true;
-        }
-      }
-      
-      if (this.lastHashes.contract && newHashes.contract && this.lastHashes.contract !== newHashes.contract) {
-        if (this.lastContract && currentContract) {
-          const diff = diffContract(this.lastContract, currentContract);
-          if (hasMaterialChange(diff)) {
-            this.driftDetected = true;
-          } else {
-            // R10 第2轮 (D2)：contract 微调也写入 audit.jsonl，保持审计一致性
-            this.auditLog?.append({
-              type: 'minor_drift',
-              source: 'contract_content_diff',
-              before: { sha: this.lastHashes.contract },
-              after: { sha: newHashes.contract },
-              details: {
-                target: 'contract',
-                lineChanges: diff.lineChanges,
-                changeRatio: diff.changeRatio,
-                material: false,
-              },
-            }).catch(() => { /* best-effort: audit log failure is non-fatal */ });
-          }
-        } else {
-          this.driftDetected = true;
-        }
-      }
-      
-      // 更新缓存
-      this.lastHashes = newHashes;
-      this.lastPrd = currentPrd;
-      this.lastContract = currentContract;
-    }
+    return this.stateSync!.syncFromFile();
   }
 
-  /**
-   * Persist memory StateMachine state to file STATE.yaml.
-   * Call after stage transitions and gate passes.
-   *
-   * V17: Also auto-generates RESUME.md after persisting state, so that
-   * session recovery always has the latest state regardless of whether
-   * the caller is an MCP handler or the AutoLoopScheduler.
-   */
+  /** R12 P6 Plus2: thin shell → runtime/state-sync.ts */
   async syncStateToFile(): Promise<void> {
-    if (!this.stateManager) return;
-    const memState = this.stateMachine.getState();
-    const currentState = this.stateManager.getState();
-    // Cap progress when blocked / incomplete archive
-    const progress = this.stateMachine.getProgress();
-    await this.stateManager.update({
-      pipeline: {
-        current_stage: memState.current_stage,
-        stages: memState.stages as any,
-      },
-      loops: memState.loops as any,
-      loop: {
-        iteration: memState.iteration,
-        progress,
-        current_story: memState.loops.inner.current_story || currentState.loop.current_story,
-        client: currentState.loop.client,
-        model: currentState.loop.model,
-        max_iterations: currentState.loop.max_iterations,
-      },
-      attestation: memState.attestation,
-      strikes: currentState.strikes,
-    });
-    // V17: Auto-generate RESUME.md after state sync — STATE-driven next_action
-    if (this.resumeGen && this.stateManager) {
-      const entry = this.getStageEntryAction(memState.current_stage);
-      await this.resumeGen.generate(this.stateManager, {
-        next_tool: entry.tool,
-        next_action: entry.action,
-        last_milestone: new Date().toISOString(),
-        // R10: 每次落盘都刷新引擎代际，跨客户端/跨会话恢复可据此识别不兼容状态
-        engine_version: AZALOOP_ENGINE_VERSION,
-      }).catch(() => {
-        // best-effort: RESUME.md generation failure is non-fatal
-      });
-    }
-
-    // R10 第3轮 (D3)：主循环 checkpoint——持久化 loop.md 并验证所有产物。
-    // 原先 syncStateToFile 只写 STATE.yaml + RESUME.md，遗漏 prd.md/contract.md/loop.md。
-    // 现在 FilePersistor.persistCheckpoint 会写入 loop.md 摘要并 verifyAll()，
-    // 任何产物损坏都会触发 alert（不阻断主流程）。
-    if (this.filePersistor) {
-      const loopMd = this.buildLoopMarkdown(memState, currentState);
-      await this.filePersistor.persistCheckpoint({ loopMd }).catch(() => {
-        // best-effort: checkpoint failure is non-fatal (alert already fired inside)
-      });
-    }
+    return this.stateSync!.syncToFile();
   }
 
-  /**
-   * R10 第3轮 (D3)：从当前 state 生成 loop.md 摘要。
-   *
-   * loop.md 是人类可读的循环进度快照——跨客户端/跨会话恢复时，
-   * 宿主 AI 可直接读取此文件了解"循环走到哪了"，无需解析 STATE.yaml。
-   */
+  /** R12 P6 Plus2: thin shell → runtime/state-sync.ts */
   private buildLoopMarkdown(
     memState: ReturnType<StateMachine['getState']>,
     currentState: ReturnType<StateManager['getState']>,
   ): string {
-    const now = new Date().toISOString();
-    const entry = this.getStageEntryAction(memState.current_stage);
-    const stageStatuses = Object.entries(memState.stages)
-      .map(([s, info]: [string, any]) => `- **${s}**: ${info?.status ?? 'unknown'}`)
-      .join('\n');
-    const strikes = currentState.strikes ?? 0;
-    return [
-      '# AzaLoop Progress',
-      '',
-      `> Auto-generated checkpoint at ${now}`,
-      '',
-      '| Field | Value |',
-      '|-------|-------|',
-      `| Stage | ${memState.current_stage} |`,
-      `| Iteration | ${memState.iteration} |`,
-      `| Progress | ${this.stateMachine.getProgress()} |`,
-      `| Client | ${currentState.loop.client || '(unknown)'} |`,
-      `| Model | ${currentState.loop.model || '(unknown)'} |`,
-      `| Strikes | ${strikes} |`,
-      `| Engine Version | ${AZALOOP_ENGINE_VERSION} |`,
-      '',
-      '## Stage Status',
-      '',
-      stageStatuses || '(no stages)',
-      '',
-      '## Next Action',
-      '',
-      `Run \`${entry.tool}\` with action \`${entry.action}\` to continue the loop.`,
-      '',
-      '## Recovery',
-      '',
-      'To resume this loop in any client, run: `aza continue`',
-      '',
-    ].join('\n');
+    return this.stateSync!.buildLoopMarkdown(memState, currentState);
   }
 
   // ── V11 compatibility: condition-based guards ──
 
+  /** R12 P6 Plus3: thin shell → runtime/lifecycle-handler.ts */
   setCondition(key: GuardConditionKey, passed: boolean): void {
-    this.conditions.set(key, passed);
+    this.lifecycleHandler?.setCondition(key, passed);
   }
-
+  /** R12 P6 Plus3: thin shell → runtime/lifecycle-handler.ts */
   getCondition(key: GuardConditionKey): boolean {
-    return this.conditions.get(key) === true;
+    return this.lifecycleHandler?.getCondition(key) ?? false;
   }
-
+  /** R12 P6 Plus3: thin shell → runtime/lifecycle-handler.ts */
   resetConditions(): void {
-    this.conditions.clear();
+    this.lifecycleHandler?.resetConditions();
   }
 
   // ── Main entry: next() with V12 three-level routing ──
 
+  /** R12 P6 Plus: thin shell → runtime/next-orchestrator.ts */
   async next(currentStage?: string): Promise<LoopResponse<{ stage: string; progress: string; next_action: NextAction; awaitingAction?: NextAction }>> {
-    // V12: Sync state from file at the start of each cycle
-    await this.syncStateFromFile();
-
-    // G4: No-progress deadlock check — fire a hard stop / recovery
-    // response when the ledger has not seen any state change for
-    // longer than the configured no-progress timeout.
-    const noProgress = this.deadlockDetector.checkNoProgress(this.ledger2d.getLastChangeAt());
-    if (noProgress.deadlocked) {
-      this.hardStop.stop(
-        'max_iterations_exceeded',
-        `no_progress_recovery: ${noProgress.reason ?? 'no progress detected'}`,
-        this.stateMachine.getState().iteration,
-      );
-      return this.buildResponse(this.stateMachine.getCurrentStage(), {
-        tool: 'aza_loop',
-        action: 'stop',
-        reason: noProgress.reason ?? 'no_progress_recovery',
-      }, true);
-    }
-
-    // R10 第8轮 (D10 深化)：内容哈希停滞检测——按迭代次数判定。
-    // 与 checkNoProgress 互补：循环可能快速空转（每秒 1 轮但内容不变），
-    // 时间检测 30min 才会触发，内容检测 5 轮即可触发，更快暴露死循环。
-    // 仅在已收集足够 contentHash 条目后启用（避免误杀早期初始化阶段）。
-    {
-      const entries = this.ledger2d.getEntries();
-      if (entries.length >= 5) {
-        const stagnation = this.deadlockDetector.checkContentStagnationFromEntries(entries);
-        if (stagnation.deadlocked) {
-          this.hardStop.stop(
-            'max_iterations_exceeded',
-            `content_stagnation_recovery: ${stagnation.reason ?? 'content unchanged across iterations'}`,
-            this.stateMachine.getState().iteration,
-          );
-          // 记录审计：内容停滞比时间停滞更隐蔽，需明确落盘便于追溯
-          try {
-            this.auditLog?.append({
-              type: 'hard_stop',
-              source: 'deadlock-detector.checkContentStagnation',
-              details: {
-                reason: stagnation.reason,
-                consecutiveCount: stagnation.consecutiveCount,
-                lastChangeAt: this.ledger2d.getLastChangeAt(),
-                iteration: this.stateMachine.getState().iteration,
-              },
-            });
-          } catch {
-            /* best-effort */
-          }
-          return this.buildResponse(this.stateMachine.getCurrentStage(), {
-            tool: 'aza_loop',
-            action: 'stop',
-            reason: stagnation.reason ?? 'content_stagnation_recovery',
-          }, true);
-        }
-      }
-    }
-
-    // G1: Record this iteration into the 2D progress ledger so crash
-    // recovery and no-progress detection can reason about the most
-    // recent stage/iteration pair.
-    {
-      const stageForRecord = (currentStage as Stage | undefined) ?? this.stateMachine.getCurrentStage();
-      const stageIter = this.stageIterations.get(stageForRecord) ?? 0;
-      // R10 第2轮 (D10)：把 PRD/contract 哈希一起记入账本。
-      // 原先只记 stage/iteration，用户在同一 stage 反复修改 PRD 时会被
-      // 误判为"无进展"而触发 hard-stop。现在将内容哈希拼接后传入，
-      // ProgressLedger2D 会在哈希变化时刷新 lastChangeAt。
-      let stageContentHash: string | undefined;
-      if (this.lastHashes.prd || this.lastHashes.contract) {
-        stageContentHash = [this.lastHashes.prd, this.lastHashes.contract]
-          .filter(Boolean).join('|') || undefined;
-      }
-      this.ledger2d.record(
-        stageForRecord,
-        this.stateMachine.getState().iteration,
-        stageIter,
-        'in_progress',
-        stageContentHash,
-      );
-    }
-
-    // G5: Wrap the main body in a best-effort try/catch. If anything
-    // throws (e.g. transient I/O, LLM hiccup) we attempt one cold-start
-    // retry through the circuit breaker before propagating the error.
-    let result: LoopResponse<{ stage: string; progress: string; next_action: NextAction; awaitingAction?: NextAction }>;
-    try {
-      // If OuterLoop is enabled with explicit driver env, use OuterLoop batch path.
-      // Default MCP path stays on nextV12 (cooperative awaitingAction) and advances
-      // the outer board when a story completes.
-      if (
-        this.configLoopOptions.enableOuterLoop &&
-        this.outerLoop &&
-        this.outerLoopCallbacks &&
-        process.env.AZA_OUTER_LOOP_DRIVER === 'true'
-      ) {
-        const outerResult = await this.runOuterLoop();
-        result = this.buildOuterLoopResponse(outerResult);
-      } else {
-        result = this.configLoopOptions.enableV12
-          ? await this.nextV12(currentStage)
-          : this.nextV11(currentStage);
-      }
-
-      // Sequential multi-story: when archive completes, pull next pending story
-      if (this.configLoopOptions.enableOuterLoop && result.success) {
-        await this.advanceOuterBoardIfNeeded(result);
-      }
-    } catch (err) {
-      // G5: Cold-start retry — half the workload and try again with a
-      // simplified re-entry into the V12 path. If the retry also fails
-      // we surface the original error so callers can react.
-      const message = err instanceof Error ? err.message : String(err);
-      try {
-        result = await this.circuitBreaker.coldStartRetry(async () => {
-          // Simplified retry: skip the OuterLoop batch path and
-          // re-enter through nextV12 with a fresh stage read.
-          return await this.nextV12(currentStage);
-        });
-      } catch (retryErr) {
-        const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
-        return this.buildResponse(this.stateMachine.getCurrentStage(), {
-          tool: 'aza_loop',
-          action: 'stop',
-          reason: `next() failed: ${message}; coldStartRetry failed: ${retryMessage}`,
-        }, true);
-      }
-    }
-
-    // V12: Sync state to file at the end of each cycle
-    await this.syncStateToFile();
-    return result;
+    return this.orchestrator!.run(currentStage);
   }
 
-  /**
-   * After a story finishes archive, dequeue the next pending story onto the board
-   * and reset pipeline to design so aza_loop(full) continues the batch.
-   */
+  /** R12 P6 Plus: thin shell → runtime/phase-handler.ts */
+  private async dispatchV12(currentStage?: string): Promise<LoopResponse<{ stage: string; progress: string; next_action: NextAction; awaitingAction?: NextAction }>> {
+    return this.phaseHandler!.run(currentStage);
+  }
+
+  /** R12 P6 Plus2: thin shell → runtime/next-v11.ts */
+  private dispatchV11(currentStage?: string): LoopResponse<{ stage: string; progress: string; next_action: NextAction }> {
+    return this.nextV11Runner!.run(currentStage) as LoopResponse<{ stage: string; progress: string; next_action: NextAction }>;
+  }
+
+  /** R12 P6 Plus2: thin shell → runtime/outer-loop-runner.ts */
   private async advanceOuterBoardIfNeeded(
     result: LoopResponse<{ stage: string; progress: string; next_action: NextAction; awaitingAction?: NextAction }>,
   ): Promise<void> {
-    if (!this.stateManager) return;
-    const stage = result.metadata?.stage || result.data?.stage;
-    const action = result.next_action?.action;
-    if (stage !== 'archive' || (action !== 'done' && action !== 'ship')) return;
-
-    const state = this.stateManager.getState();
-    const board = state.loops?.outer?.board || { pending: [], in_progress: [], done: [], blocked: [] };
-    const doneStory = state.loop.current_story;
-    const pending = [...(board.pending || [])];
-    const nextStory = pending.shift();
-    const done = [...(board.done || [])];
-    if (doneStory) done.push(doneStory);
-
-    if (!nextStory) {
-      await this.stateManager.update({
-        loops: {
-          ...state.loops,
-          outer: {
-            ...state.loops.outer,
-            board: { ...board, pending: [], in_progress: [], done, blocked: board.blocked || [] },
-          },
-        },
-      });
-      return;
-    }
-
-    // Reset pipeline for next story (keep PRD approved — start at design)
-    this.stateMachine.loadState({
-      current_stage: 'design',
-      stages: {
-        open: { status: 'completed' },
-        design: { status: 'pending' },
-        build: { status: 'pending' },
-        verify: { status: 'pending' },
-        archive: { status: 'pending' },
-      } as any,
-      iteration: this.stateMachine.getState().iteration,
-    });
-    // R10 第5轮 (D5)：切换到新 story 时重置 per-task 预算，
-    // 避免上一个 story 的 token 累积到当前 story。
-    this.tokenBudget.resetPerTask();
-    this.stateMachine.setInnerLoopState({ current_story: nextStory } as any);
-    await this.stateManager.update({
-      pipeline: {
-        current_stage: 'design',
-        stages: this.stateMachine.getState().stages as any,
-      },
-      loop: {
-        ...state.loop,
-        current_story: nextStory,
-        progress: '20%',
-      },
-      loops: {
-        ...state.loops,
-        outer: {
-          ...state.loops.outer,
-          board: {
-            pending,
-            in_progress: [nextStory],
-            done,
-            blocked: board.blocked || [],
-          },
-        },
-        inner: {
-          ...state.loops.inner,
-          current_story: nextStory,
-        },
-      },
-    });
+    return this.outerLoopRunner!.advanceBoardIfNeeded(result);
   }
 
-  /**
-   * Run the OuterLoop for Story-level scheduling.
-   */
+  /** R12 P6 Plus2: thin shell → runtime/outer-loop-runner.ts */
   private async runOuterLoop(): Promise<OuterLoopResult> {
-    const storyProvider = this.outerLoopCallbacks?.storyProvider || 
-      (this.stateManager ? createDefaultStoryProvider(this.stateManager) : null);
-    
-    const humanGate = this.outerLoopCallbacks?.humanGate ||
-      (this.stateManager ? createDefaultHumanGate(this.stateManager) : null);
-    
-    const commit = this.outerLoopCallbacks?.commit ||
-      (this.stateManager ? createDefaultCommit(this.stateManager) : null);
-
-    if (!storyProvider || !humanGate || !commit) {
-      throw new Error('OuterLoop requires storyProvider, humanGate, and commit callbacks or StateManager');
-    }
-
-    const stateReader = async () => {
-      const state = this.stateMachine.getState();
-      const innerState = this.stateMachine.getInnerLoopState();
-      return {
-        current_stage: state.current_stage,
-        has_in_progress: innerState.current_story !== null,
-        iteration: state.iteration,
-      };
-    };
-
-    // DAG parallel for independent stories when explicitly enabled
-    if (process.env.AZA_OUTER_PARALLEL === 'true') {
-      return await this.outerLoop!.runParallel(
-        storyProvider,
-        stateReader,
-        this.handlerProvider,
-        humanGate,
-        commit,
-      );
-    }
-
-    const result = await this.outerLoop!.run(
-      storyProvider,
-      stateReader,
-      this.handlerProvider,
-      humanGate,
-      commit,
-    );
-
-    // Sync state after OuterLoop completes
-    await this.syncStateToFile();
-    return result;
+    return this.outerLoopRunner!.run();
   }
 
-  /**
-   * Build response from OuterLoop result.
-   */
+  /** R12 P6 Plus2: thin shell → runtime/outer-loop-runner.ts */
   private buildOuterLoopResponse(outerResult: OuterLoopResult): LoopResponse<{ stage: string; progress: string; next_action: NextAction }> {
-    const stage = this.stateMachine.getCurrentStage();
-    const state = this.stateMachine.getState();
-
-    if (outerResult.done) {
-      return this.buildResponse('archive', {
-        tool: 'aza_loop', action: 'done',
-        reason: 'All stories processed — project complete',
-      });
-    }
-
-    if (outerResult.escalated) {
-      return this.buildResponse(stage, {
-        tool: 'aza_loop', action: 'escalate',
-        reason: outerResult.escalation_reason || 'OuterLoop escalated to human',
-      }, true);
-    }
-
-    // Continue with next story
-    return this.buildResponse(stage, {
-      tool: 'aza_loop', action: 'next',
-      reason: `OuterLoop cycle ${outerResult.total_cycles} completed — continue to next story`,
-    });
+    return this.outerLoopRunner!.buildResponse(outerResult);
   }
 
-  /**
-   * V12 path: route through InnerLoop → PhaseLoop three-level hierarchy.
-   *
-   * Calls InnerLoop.run() which invokes PhaseLoop.run() for each stage,
-   * executing maker → checker → gate → optimizer cycle.
-   */
-  private async nextV12(currentStage?: string): Promise<LoopResponse<{ stage: string; progress: string; next_action: NextAction; awaitingAction?: NextAction }>> {
-    const stage = (currentStage || this.stateMachine.getCurrentStage()) as Stage;
-
-    // ── CP1 drift detection: if PRD/contract changed out-of-band, force
-    //    back to the open stage to regenerate. spec-superflow pattern. ──
-    if (this.driftDetected && stage !== 'open') {
-      this.driftDetected = false;
-      this.stateMachine.setStageStatus(stage, 'blocked');
-      this.stateMachine.setStageStatus('open', 'in_progress');
-      this.stateMachine.loadState({ current_stage: 'open' });
-      return this.buildResponse('open', {
-        tool: 'aza_prd', action: 'modify',
-        reason: 'Drift detected: PRD or contract changed out-of-band. Returning to open stage to regenerate.',
-      }, false, 'inner');
-    }
-
-    // ── CP1 DP gate: enforce Decision Point prerequisites before entering a
-    //    new stage. The 'open' stage is exempt (it's the entry point — DP-0
-    //    is init→open and hasn't had a chance to be recorded yet). Stages
-    //    already in_progress are also exempt (already lawfully entered). ──
-    const stageInfo = this.stateMachine.getStageInfo(stage);
-    if (stage !== 'open' && stageInfo.status === 'pending') {
-      if (!this.dpRegistry.canEnterStage(stage)) {
-        return this.buildResponse(stage, {
-          tool: 'aza_loop', action: 'escalate',
-          reason: `DP gate blocked: stage "${stage}" requires its Decision Point to be passed first. Complete the prior stage via aza_loop(action=next) or aza_loop(full).`,
-        }, true);
-      }
-    }
-
-    // V20 Task 13b: 读取 break-loop.jsonl，注入「历史教训」上下文
-    if (this.configLoopOptions.azaDir) {
-      try {
-        const breakLoopPath = path.join(this.configLoopOptions.azaDir, 'spec-conventions', 'break-loop.jsonl');
-        if (fs.existsSync(breakLoopPath)) {
-          const content = fs.readFileSync(breakLoopPath, 'utf8');
-          const lines = content.trim().split('\n').filter(Boolean);
-          if (lines.length > 0) {
-            const lastLine = lines[lines.length - 1] || '';
-            const lastBreak = JSON.parse(lastLine);
-            // 从 convention.description 中提取根因（格式：Top root cause: xxx）
-            const description = lastBreak?.convention?.description ?? '';
-            const rootCauseMatch = description.match(/Top root cause: (\w+)/);
-            if (rootCauseMatch && rootCauseMatch[1]) {
-              const rootCause = rootCauseMatch[1];
-              // 注入一条「历史教训」ContextEntry
-              const lessonEntry: ContextEntry = {
-                type: 'constraint',
-                content: `[历史教训] 上次因 ${rootCause} 触发 3-strike，避免重复此模式`,
-                priority: 0.9,
-                tokenEstimate: 50,
-                metadata: { source: 'break-loop', iteration: lastBreak.iteration },
-              };
-              // 在 pruneContext 之后注入（见下方）
-              this.checkerCache.set('historical_lesson', { result: lessonEntry, timestamp: Date.now() });
-            }
-          }
-        }
-      } catch { /* best-effort */ }
-    }
-
-    // V20 Task 11: DLP 链式检测
-    // R10 第2轮 (D1)：用真实 RunLedger 最近 20 条记录替换空数组占位符。
-    // 这是断链已久的关键安全检查——原先 `[]` 永远检不出 DLP 链。
-    if (this.dlpDetector && this.resumeGen) {
-      try {
-        const recentEntries = this.runLedger?.getRecentEntries(20) ?? [];
-        const chainReport = this.dlpDetector.detectChain(recentEntries);
-        if (chainReport.detected) {
-          this.hardStop.stop('security_blocker', `DLP chain detected: ${chainReport.reason}`, this.stateMachine.getState().iteration);
-          return this.buildResponse(stage, {
-            tool: 'aza_loop', action: 'stop',
-            reason: `DLP chain detected: ${chainReport.reason}`,
-          }, true);
-        }
-      } catch { /* best-effort */ }
-    }
-
-    // V20 Task 6: 纯函数路由集中化
-    const routeAction = this.deterministicRoute(stage, {
-      hardStopped: this.hardStop.isStopped(),
-      breakerTripped: this.circuitBreaker.checkAll()?.tripped ?? false,
-      iterExceeded: HardStopManager.checkIterations(
-        this.stateMachine.getState().iteration, this.configLoopOptions.maxIterations,
-      ).exceeded,
-      strikeHardStop: this.strikeSystem.isHardStop(),
-      budgetAction: this.tokenBudget.checkBudget(),
-    });
-
-    if (routeAction) {
-      // 根据路由结果返回
-      if (routeAction.action === 'report') {
-        return this.buildResponse(stage, routeAction, true);
-      }
-      if (routeAction.action === 'escalate') {
-        if (routeAction.reason.includes('Circuit breaker')) {
-          const breakerResult = this.circuitBreaker.checkAll();
-          if (breakerResult) {
-            this.hardStop.stop('max_iterations_exceeded', breakerResult.reason || 'Circuit breaker tripped', this.stateMachine.getState().iteration);
-            this.stateMachine.setStageStatus(stage, 'blocked', breakerResult.reason);
-            this.stateMachine.loadState({ current_stage: stage });
-          }
-        }
-        if (routeAction.reason.includes('3-Strike')) {
-          this.hardStop.stop('strikes_exceeded', `3-Strike: ${this.strikeSystem.getStrikeCount()} strikes`, this.stateMachine.getState().iteration);
-          this.stateMachine.setStageStatus('design', 'in_progress');
-          this.stateMachine.setStageStatus(stage, 'blocked');
-          this.stateMachine.loadState({ current_stage: 'design' });
-          
-          // V20 Task 13b: 记录根因
-          const rootCause = this.strikeSystem.getRootCause();
-          try {
-            const { breakLoop } = await import('../L9_knowledge/break-loop');
-            await breakLoop({
-              stage,
-              iteration: this.stateMachine.getState().iteration,
-              error: routeAction.reason,
-              lastAction: { tool: 'aza_loop', action: 'escalate', reason: '3-strike escalation' },
-              strikeCount: this.strikeSystem.getStrikeCount(),
-              extra: rootCause ? { cause: rootCause.cause } : undefined,
-            }, this.configLoopOptions.azaDir || '.aza');
-          } catch { /* best-effort */ }
-        }
-        return this.buildResponse(stage === 'design' ? 'design' : stage, routeAction, true);
-      }
-      if (routeAction.action === 'stop') {
-        if (routeAction.reason.includes('Max iterations')) {
-          const iterCheck = HardStopManager.checkIterations(
-            this.stateMachine.getState().iteration, this.configLoopOptions.maxIterations,
-          );
-          this.hardStop.stop('max_iterations_exceeded', iterCheck.detail!, this.stateMachine.getState().iteration);
-        }
-        if (routeAction.reason.includes('Token budget')) {
-          this.hardStop.stop('critical_error', 'token budget exhausted', this.stateMachine.getState().iteration);
-        }
-        return this.buildResponse(stage, routeAction, true);
-      }
-    }
-    // 70% summarize / 80% compress handled via memoryCompressor in stage transitions
-
-    // ── V16 Core: Call InnerLoop.runStage() for single-stage scheduling ──
-    const innerState = this.stateMachine.getInnerLoopState();
-    const storyId = innerState.current_story || `STORY-${stage.toUpperCase()}`;
-
-    // Mark current stage as in_progress
-    this.stateMachine.setStageStatus(stage, 'in_progress');
-
-    // ── V12: Generate per-stage context (JSONL) and inject knowledge ──
-    let contextBundle: ContextEntryBundle | null = null;
-    let knowledgeEntries: string[] = [];
-    if (this.contextOrchestrator) {
-      try {
-        const bundle = await this.contextOrchestrator.generateContextFiles(stage);
-        const injected = await this.contextOrchestrator.injectContext(stage);
-        let pruned = this.contextOrchestrator.pruneContext(
-          injected,
-          this.tokenBudget.getRemainingPerTask(),
-        );
-        
-        // V20 Task 13b: 注入历史教训
-        const lessonCache = this.checkerCache.get('historical_lesson');
-        if (lessonCache && lessonCache.result) {
-          const entries = [...(pruned.entries || [])];
-          entries.push(lessonCache.result);
-          pruned = {
-            ...pruned,
-            entries,
-            totalTokens: pruned.totalTokens + lessonCache.result.tokenEstimate,
-          };
-        }
-        
-        // Store pruned context for handlers to use — ContextEntryBundle structure
-        contextBundle = pruned;
-        this.checkerCache.set(`context:${stage}`, { result: contextBundle, timestamp: Date.now() });
-      } catch { /* best-effort: context injection is non-fatal */ }
-    }
-    // Inject stage-specific knowledge from InjectionEngine
-    knowledgeEntries = this.injectionEngine.inject({
-      stage,
-      tags: [stage, storyId],
-    });
-    if (knowledgeEntries.length > 0) {
-      this.checkerCache.set(`knowledge:${stage}`, { result: knowledgeEntries, timestamp: Date.now() });
-    }
-
-    // Update handler provider with fresh context/knowledge for this cycle
-    const handlerWorkDir = this.configLoopOptions.azaDir ? path.dirname(this.configLoopOptions.azaDir) : undefined;
-    this.handlerProvider = createRealHandlerProvider({
-      workDir: handlerWorkDir,
-      azaDir: this.configLoopOptions.azaDir || undefined,
-      checkerCache: this.checkerCache,
-      contextBundle,
-      knowledgeEntries,
-    });
-
-    // V16: Execute a single stage via InnerLoop.runStage()
-    const innerStageResult = await this.innerLoop.runStage(stage, storyId, this.handlerProvider);
-
-    // V16: If awaiting agent action, return it as next_action (事前指令)
-    // V18: Pass awaitingAction as 5th param so it's propagated in data.awaitingAction
-    if (innerStageResult.awaitingAction) {
-      return this.buildResponse(stage, {
-        tool: innerStageResult.awaitingAction.tool,
-        action: innerStageResult.awaitingAction.action,
-        reason: innerStageResult.awaitingAction.reason || `Awaiting LLM to execute ${innerStageResult.awaitingAction.tool} for stage "${stage}"`,
-      }, false, 'inner', innerStageResult.awaitingAction);
-    }
-
-    if (innerStageResult.success) {
-      // Stage succeeded → record progress
-      this.circuitBreaker.recordProgress('inner');
-      this.markLedgerProgress();
-
-      // Check if all stages completed
-      const state = this.stateMachine.getState();
-      const allCompleted = Object.values(state.stages).every(s => s.status === 'completed');
-      const attestationVerified = state.attestation?.verified ?? false;
-
-      if (allCompleted && stage === 'archive') {
-        const gateResult = this.completionGate.evaluate({
-          gated_mode_enabled: true,
-          has_in_progress_stage: false,
-          all_stages_completed: allCompleted,
-          stop_hook_active: this.stopHookActive,
-          block_count: this.blockCount,
-          block_count_limit: DEFAULT_BLOCK_COUNT_LIMIT,
-          ledger_has_progress: this.ledgerHasProgress,
-          attestation_verified: attestationVerified,
-        });
-        if (gateResult.canStop) {
-          this.stateMachine.setStageStatus('archive', 'completed');
-          return this.buildResponse('archive', {
-            tool: 'aza_loop', action: 'done',
-            reason: 'All stages complete — project archived',
-          });
-        } else {
-          return this.buildResponse(stage, {
-            tool: 'aza_quality', action: 'check',
-            reason: `CompletionGate blocked: ${gateResult.blockedReason}`,
-          });
-        }
-      }
-
-      // Advance to next stage
-      const STAGES: Stage[] = ['open', 'design', 'build', 'verify', 'archive'];
-      const idx = STAGES.indexOf(stage);
-      if (idx >= 0 && idx < STAGES.length - 1) {
-        const nextStage = STAGES[idx + 1]!;
-        this.stateMachine.setStageStatus(stage, 'completed');
-        this.stateMachine.setStageStatus(nextStage, 'in_progress');
-        this.stateMachine.setPhaseLoopState({
-          current: nextStage,
-          iteration: 0,
-          history: [],
-        });
-        return this.buildResponse(nextStage, this.getStageEntryAction(nextStage), false, 'inner');
-      }
-
-      // archive stage — stay on same stage, next iteration
-      return this.buildResponse(stage, this.getStageEntryAction(stage), false, 'inner');
-    }
-
-    // Stage failed
-    if (innerStageResult.escalated) {
-      this.circuitBreaker.recordFailure('inner', innerStageResult.escalation_reason || 'Stage failed');
-      return this.buildResponse(stage, {
-        tool: 'aza_loop', action: 'escalate',
-        reason: innerStageResult.escalation_reason || `Stage "${stage}" escalated`,
-      }, false, 'inner');
-    }
-
-    // Not done (needs retry) — return refine action
-    this.circuitBreaker.recordFailure('phase', `Stage "${stage}" gate check failed`);
-
-    // Check phase-level stagnation
-    const phaseCheck = this.circuitBreaker.check('phase');
-    if (phaseCheck.tripped) {
-      this.circuitBreaker.recordFailure('inner', `Phase "${stage}" circuit breaker tripped`);
-      return this.buildResponse(stage, {
-        tool: 'aza_loop', action: 'escalate',
-        reason: `Stage "${stage}" circuit breaker tripped: ${phaseCheck.reason}`,
-      }, false, 'inner');
-    }
-
-    return this.buildResponse(stage, {
-      tool: 'aza_spec',
-      action: stage === 'design' ? 'design' : stage === 'verify' ? 'verify' : 'implement',
-      reason: `Stage "${stage}" needs refinement (iteration ${innerStageResult.iteration})`,
-    }, false, 'phase');
-  }
-
-  /**
-   * V11 fallback: boolean guard check.
-   */
+  /** R12 P6 Plus2: thin shell → runtime/next-v11.ts */
   private nextV11(currentStage?: string): LoopResponse<{ stage: string; progress: string; next_action: NextAction }> {
-    const stage = currentStage || this.stateMachine.getCurrentStage();
-
-    if (this.hardStop.isStopped()) {
-      return this.buildResponse(stage, {
-        tool: 'aza_loop', action: 'report',
-        reason: `Hard stop: ${this.hardStop.getRecord()?.reason}`,
-      }, true);
-    }
-
-    const iterCheck = HardStopManager.checkIterations(
-      this.stateMachine.getState().iteration, this.configLoopOptions.maxIterations,
-    );
-    if (iterCheck.exceeded) {
-      this.hardStop.stop('max_iterations_exceeded', iterCheck.detail!, this.stateMachine.getState().iteration);
-      return this.buildResponse(stage, {
-        tool: 'aza_loop', action: 'stop', reason: iterCheck.detail!,
-      }, true);
-    }
-
-    const currentStageIter = this.stageIterations.get(stage) || 0;
-    if (currentStageIter >= this.configLoopOptions.maxStageIterations) {
-      this.hardStop.stop('max_iterations_exceeded',
-        `Stage "${stage}" exceeded max stage iterations (${this.configLoopOptions.maxStageIterations})`,
-        this.stateMachine.getState().iteration);
-      return this.buildResponse(stage, {
-        tool: 'aza_loop', action: 'escalate',
-        reason: `Stage ${stage} stuck after ${currentStageIter} attempts`,
-      }, true);
-    }
-
-    const strikeCheck = HardStopManager.checkStrikes(
-      this.strikeSystem.getStrikeCount(), this.configLoopOptions.maxStrikes,
-    );
-    if (strikeCheck.exceeded) {
-      this.hardStop.stop('strikes_exceeded', strikeCheck.detail!, this.stateMachine.getState().iteration);
-      return this.buildResponse(stage, {
-        tool: 'aza_loop', action: 'escalate', reason: strikeCheck.detail!,
-      }, true);
-    }
-
-    const guardResult = this.guards.checkStage(stage as any);
-
-    if (guardResult.allowed) {
-      this.stateMachine.setStageStatus(stage as any, 'completed');
-      if (stage === 'archive') {
-        // v13 — P1.1: notify the worker scheduler that the loop is
-        // done. This fans out to `on-completion` workers (document,
-        // audit, benchmark) which produce the final summary reports.
-        this.notifyCompletion();
-        return this.buildResponse(stage, {
-          tool: 'aza_loop', action: 'done', reason: 'All stages complete',
-        });
-      }
-      this.stateMachine.advance();
-      const advancedStage = this.stateMachine.getCurrentStage();
-      this.stateMachine.setStageStatus(advancedStage, 'in_progress');
-      return this.buildResponse(advancedStage, this.getStageEntryAction(advancedStage));
-    }
-
-    this.stageIterations.set(stage, currentStageIter + 1);
-    this.stateMachine.setStageStatus(stage as any, 'in_progress');
-
-    return this.buildResponse(stage, {
-      tool: guardResult.refine_tool || 'aza_spec',
-      action: (guardResult.refine_action === 'refine'
-        ? (stage === 'design' ? 'design' : stage === 'verify' ? 'verify' : 'implement')
-        : (guardResult.refine_action || (stage === 'design' ? 'design' : 'implement'))),
-      reason: guardResult.reason || `Quality checks not passed for stage "${stage}"`,
-    });
+    return this.nextV11Runner!.run(currentStage) as LoopResponse<{ stage: string; progress: string; next_action: NextAction }>;
   }
 
   // ── Shared methods ──
 
+  /** R12 P6 Plus3: thin shell → runtime/lifecycle-handler.ts */
   recordAction(tool: string, action: string): void {
-    this.deadlockDetector.record(tool, action, this.stateMachine.getState().iteration);
-    if (this.deadlockDetector.isDeadlocked()) {
-      const repeated = this.deadlockDetector.getRepeatedAction();
-      if (repeated) {
-        this.strikeSystem.record('deadlock_detected', `Deadlock: repeated ${repeated.tool}:${repeated.action}`, this.stateMachine.getState().iteration);
-        // v13 — P1.1: notify the worker scheduler of the strike so
-        // `on-strike` workers (deepdive) produce a root-cause report.
-        this.notifyStrike(`deadlock_detected: ${repeated.tool}:${repeated.action}`);
-        this.deadlockDetector.clear();
-      }
-    }
+    this.lifecycleHandler?.recordAction(tool, action);
   }
-
+  /** R12 P6 Plus3: thin shell → runtime/lifecycle-handler.ts */
   completeStage(stage: string): { success: boolean; error?: string } {
-    const guardResult = this.guards.checkStage(stage as any);
-    if (!guardResult.allowed) {
-      return { success: false, error: guardResult.reason || `Cannot complete stage "${stage}": quality gates not passed` };
-    }
-    if (stage === 'archive') {
-      this.stateMachine.setStageStatus('archive', 'completed');
-      // Fire-and-forget DP-5; sync is best-effort for V11 complete path
-      void this.dpRegistry.record('DP-5', 'archive', 'done', 'passed', {
-        iteration: this.stateMachine.getState().iteration,
-        reason: 'Archive stage completed',
-      });
-      void this.syncStateToFile();
-      return { success: true };
-    }
-    this.stateMachine.setStageStatus(stage as any, 'completed');
-    this.stateMachine.advance();
-    const nextStage = this.stateMachine.getCurrentStage();
-    this.stateMachine.setStageStatus(nextStage, 'in_progress');
-    // R10 第5轮 (D5)：进入新 stage 时重置 per-task 预算。
-    // 原先 resetPerTask() 从未被调用——导致 per-task 限流累积跨 stage，
-    // 后续 stage 一开始就接近上限，触发误压缩/误停止。
-    this.tokenBudget.resetPerTask();
-
-    const dpMap: Record<string, { id: 'DP-0' | 'DP-1' | 'DP-2' | 'DP-3' | 'DP-4'; from: any; to: any }> = {
-      open: { id: 'DP-1', from: 'open', to: 'design' },
-      design: { id: 'DP-2', from: 'design', to: 'build' },
-      build: { id: 'DP-3', from: 'build', to: 'verify' },
-      verify: { id: 'DP-4', from: 'verify', to: 'archive' },
-    };
-    const dp = dpMap[stage];
-    if (dp) {
-      void this.dpRegistry.record(dp.id, dp.from, dp.to, 'passed', {
-        iteration: this.stateMachine.getState().iteration,
-        reason: `Stage "${stage}" completed → "${nextStage}"`,
-      });
-    }
-    void this.syncStateToFile();
-    return { success: true };
+    return this.lifecycleHandler?.completeStage(stage) ?? { success: false, error: 'LifecycleHandler not initialized' };
   }
-
+  /** R12 P6 Plus3: thin shell → runtime/lifecycle-handler.ts */
   forceAdvance(stage: string): string | null {
-    this.stateMachine.setStageStatus(stage as any, 'completed');
-    return this.stateMachine.advance();
+    return this.lifecycleHandler?.forceAdvance(stage) ?? null;
   }
-
-  /**
-   * Reset controller state for reuse (caller responsible for re-init after stop).
-   */
+  /** R12 P6 Plus3: thin shell → runtime/lifecycle-handler.ts */
   reset(): void {
-    this.hardStop.reset();
-    this.circuitBreaker.reset();
-    this.strikeSystem.clear();
-    this.checkerCache.clear();
-    this.blockCount = 0;
-    this.ledgerHasProgress = false;
-    this.stopHookActive = false;
+    this.lifecycleHandler?.reset();
   }
-
+  /** R12 P6 Plus3: thin shell → runtime/lifecycle-handler.ts */
   stop(reason: StopReason, detail: string): void {
-    this.hardStop.stop(reason, detail, this.stateMachine.getState().iteration);
+    this.lifecycleHandler?.stop(reason, detail);
   }
-
+  /** R12 P6 Plus3: thin shell → runtime/lifecycle-handler.ts */
   getStageIterations(stage: string): number {
-    return this.stageIterations.get(stage) || 0;
+    return this.lifecycleHandler?.getStageIterations(stage) ?? 0;
   }
 
   // ── V12: Audit integration ──
 
+  /** R12 P6 Plus2: thin shell → runtime/audit-evaluator.ts */
   async audit() {
-    const azaDir = this.configLoopOptions.azaDir;
-    const workDir = azaDir ? path.dirname(azaDir) : process.cwd();
-
-    // ── Real signal collection from filesystem and state ──
-    const stateFileExists = this.stateManager !== null;
-
-    // Check loop.md existence
-    let loopMdExists = false;
-    if (azaDir) {
-      try { loopMdExists = fs.existsSync(path.join(azaDir, 'LOOP.md')); } catch { /* ignore */ }
-    }
-
-    // Check run-log (run-ledger.jsonl) existence
-    let runLogExists = false;
-    if (azaDir) {
-      try { runLogExists = fs.existsSync(path.join(azaDir, 'run-ledger.jsonl')); } catch { /* ignore */ }
-    }
-
-    // Skill registration — V12 enables real handler providers
-    const triageSkillRegistered = this.configLoopOptions.enableV12;
-    const verifierSkillRegistered = this.configLoopOptions.enableV12;
-
-    // Safety docs — check for AGENTS.md and safety docs in project root
-    let safetyDocsPresent = false;
-    let agentsMdPresent = false;
-    try {
-      safetyDocsPresent = fs.existsSync(path.join(workDir, 'docs', 'safety.md')) ||
-        fs.existsSync(path.join(workDir, 'SAFETY.md'));
-      agentsMdPresent = fs.existsSync(path.join(workDir, 'AGENTS.md'));
-    } catch { /* ignore */ }
-
-    // Human escalation — stop hook active or configured
-    const humanEscalationConfigured = this.stopHookActive ||
-      (this.config?.loop as any)?.human_escalation === true;
-
-    // Workflows configured — check for CI files
-    let workflowsConfigured = false;
-    try {
-      workflowsConfigured = fs.existsSync(path.join(workDir, '.github', 'workflows')) ||
-        fs.existsSync(path.join(workDir, '.gitlab-ci.yml'));
-    } catch { /* ignore */ }
-
-    // Patterns documented — conventions.jsonl exists
-    let patternsDocumented = false;
-    if (azaDir) {
-      try {
-        patternsDocumented = fs.existsSync(path.join(azaDir, 'spec-conventions', 'conventions.jsonl'));
-      } catch { /* ignore */ }
-    }
-
-    // Isolation signals
-    const worktreeIsolated = false; // worktree isolation is opt-in
-    const mcpIsolated = true; // MCP servers are always isolated by design
-
-    // Cost signals
-    const budgetConfigured = this.tokenBudget.perSessionLimit !== 120_000 || // non-default budget
-      typeof (this.config?.loop as any)?.token_budget === 'number';
-    const runLogCostTracked = this.ledgerHasProgress || runLogExists;
-
-    // Permission + anti-stall + activity
-    const leastPrivilegeEnforced = true; // enforced by MCP event bridge design
-    const circuitBreakerActive = true; // always active
-    let lastRunRecent = false;
-    let gitCommitsPresent = false;
-    if (azaDir) {
-      try {
-        // Check run-state.json for last_run timestamp
-        const runStatePath = path.join(azaDir, 'run-state.json');
-        if (fs.existsSync(runStatePath)) {
-          const raw = JSON.parse(fs.readFileSync(runStatePath, 'utf-8'));
-          if (raw.updated_at) {
-            const lastRun = new Date(raw.updated_at).getTime();
-            lastRunRecent = (Date.now() - lastRun) < 24 * 60 * 60 * 1000; // within 24h
-          }
-        }
-        // Check git commits
-        const gitDir = path.join(workDir, '.git');
-        gitCommitsPresent = fs.existsSync(gitDir) && this.stateMachine.getState().iteration > 0;
-      } catch { /* ignore */ }
-    }
-
-    const input: Record<string, boolean> = {
-      state_file_exists: stateFileExists,
-      loop_md_exists: loopMdExists,
-      run_log_exists: runLogExists,
-      triage_skill_registered: triageSkillRegistered,
-      verifier_skill_registered: verifierSkillRegistered,
-      safety_docs_present: safetyDocsPresent,
-      agents_md_present: agentsMdPresent,
-      human_escalation_configured: humanEscalationConfigured,
-      workflows_configured: workflowsConfigured,
-      patterns_documented: patternsDocumented,
-      worktree_isolated: worktreeIsolated,
-      mcp_isolated: mcpIsolated,
-      budget_configured: budgetConfigured,
-      run_log_cost_tracked: runLogCostTracked,
-      least_privilege_enforced: leastPrivilegeEnforced,
-      circuit_breaker_active: circuitBreakerActive,
-      last_run_recent: lastRunRecent,
-      git_commits_present: gitCommitsPresent,
-    };
-    return this.auditor.evaluate(input);
+    return this.auditEvaluator!.run();
   }
 
   // ── Private helpers ──
 
+  /** R12 P6 Plus3: thin shell → runtime/response-builder.ts */
   private buildResponse(
     stage: string,
     nextAction: NextAction,
     isHardStop = false,
     loopLevel: 'outer' | 'inner' | 'phase' = 'phase',
-    /** V18: When non-null, this is the V16 pre-action instruction for the LLM
-     *  to execute a specific tool (e.g. aza_spec) before calling
-     *  next() again. Propagated into `data.awaitingAction` so AutoLoopDriver
-     *  and AutoLoopScheduler can detect it. */
     awaitingAction?: NextAction,
   ): LoopResponse<{ stage: string; progress: string; next_action: NextAction; awaitingAction?: NextAction }> {
-    const state = this.stateMachine.getState();
-    const phaseState = this.stateMachine.getPhaseLoopState();
-    return {
-      success: !isHardStop,
-      data: {
-        stage,
-        progress: state.progress,
-        next_action: nextAction,
-        ...(awaitingAction ? { awaitingAction } : {}),
-      },
-      next_action: nextAction,
-      error: isHardStop ? nextAction.reason : undefined,
-      metadata: {
-        iteration: state.iteration,
-        progress: state.progress,
-        stage,
-        loop_level: loopLevel,
-        phase_iteration: phaseState.iteration,
-      },
-    };
+    return this.responseBuilder!.build(stage, nextAction, isHardStop, loopLevel, awaitingAction);
   }
 
+  /** R12 P6 Plus3: thin shell → runtime/response-builder.ts */
   private getStageEntryAction(stage: string): NextAction {
-    const actions: Record<string, NextAction> = {
-      open: { tool: 'aza_prd', action: 'review', reason: 'Entering open stage — review/approve PRD first' },
-      design: { tool: 'aza_spec', action: 'design', reason: 'Entering design stage — design stories' },
-      build: { tool: 'aza_spec', action: 'implement', reason: 'Entering build stage — implement with tests' },
-      verify: { tool: 'aza_quality', action: 'check', reason: 'Entering verify stage — run quality gates' },
-      archive: { tool: 'aza_finish', action: 'ship', reason: 'Entering archive stage — ship delivery' },
-    };
-    return actions[stage] || { tool: 'aza_loop', action: 'full', reason: `Continue in ${stage} stage` };
+    return this.responseBuilder?.getStageEntryAction(stage) ?? { tool: 'aza_loop', action: 'full', reason: `Continue in ${stage} stage` };
   }
 }

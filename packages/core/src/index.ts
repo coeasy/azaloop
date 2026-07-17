@@ -1,5 +1,5 @@
 // State
-export { StateManager } from './state/state-manager';
+export { StateManager, StateMigrationError } from './state/state-manager';
 export {
   ChecksumStore,
   computeChecksum,
@@ -131,9 +131,96 @@ export {
   writeChangeFolder,
   archiveChange,
   listChanges,
+  mergeChangeSpecsToCanonical,
   CHANGE_FOLDER_FINGERPRINT,
 } from './L1_spec/change-folder';
 export type { ChangeInput, ChangeFolder, ChangeListEntry, ChangeTaskInput } from './L1_spec/change-folder';
+
+// R10 第11轮 (P0 竞品超越) — Capability Registry
+export {
+  getCapability,
+  getCapabilitiesByMaturity,
+  getCapabilitiesByCompetitor,
+  listCapabilities,
+  getCapabilityStats,
+  renderCapabilitiesMarkdown,
+  writeCapabilitiesManifest,
+} from './evidence/capability-registry';
+export type {
+  CapabilityMaturity,
+  CapabilityDescriptor,
+  CapabilityEvidence,
+  CapabilityStats,
+} from './evidence/capability-registry';
+
+// R10 第11轮 (P2 Spec×Loop 追踪闭环) — Trace Matrix
+export {
+  buildMatrixFromPrd,
+  collectEvidence,
+  query,
+  computeCoverage,
+  renderMatrixMarkdown,
+  writeTraceMatrix,
+  loadTraceMatrix,
+} from './evidence/trace-matrix';
+export type {
+  Requirement,
+  TraceEvidence,
+  TraceEvidenceKind,
+  RequirementStatus,
+  TraceMatrix,
+  TraceMatrixQuery,
+  TraceCoverage,
+} from './evidence/trace-matrix';
+
+// R10 第11轮 (P4 跨会话 PRD 增量) — PRD diff
+export {
+  diffPrd,
+  diffToResumePrompt,
+  loadPreviousPrd,
+  writePrdDiff,
+} from './evidence/prd-diff';
+export type { PrdDiff, PrdDiffEntry } from './evidence/prd-diff';
+
+// R10 第11轮 (P5 审计) — EventLog hash-chained
+export {
+  EventLog,
+  defaultEventLog,
+  logEvent,
+  computeHash,
+} from './evidence/event-log';
+export type { AzaEvent, EventKind, EventQuery } from './evidence/event-log';
+
+// R10 第11轮 (P6 反漂移) — AntiDriftBank
+export {
+  AntiDriftBank,
+  defaultAntiDriftBank,
+} from './evidence/reasoning-bank';
+export type { ReasoningRecord, ReasoningStats, AntiDriftBankOptions } from './evidence/reasoning-bank';
+
+// R10 第11轮 (P6 multi-project) — CrossSpec
+export {
+  discoverSubProjects,
+  inferCrossLinks,
+  topoSortCrossLinks,
+  propagateHealthRisk,
+  buildCrossSpecManifest,
+  renderCrossSpecMarkdown,
+  writeCrossSpecManifest,
+} from './evidence/cross-spec';
+export type { SubProject, CrossLink, CrossSpecManifest } from './evidence/cross-spec';
+
+// R10 第11轮 (P6 marketplace) — Client Registry
+export {
+  listMarketplace,
+  getClientTemplate,
+  listTier1,
+  renderClientMarkdown,
+  renderMarketplaceIndex,
+  publishMarketplace,
+  verifyMarketplaceConsistency,
+} from './marketplace/client-registry';
+export type { ClientTemplate, ClientCategory } from './marketplace/client-registry';
 
 // L1 - Architecture Decision Records (v13 P2.1 / Trellis MADR pattern)
 export {
@@ -246,7 +333,7 @@ export {
   cosineSimilarity,
   euclideanDistance,
 } from './L2_memory/hnsw-index';
-export type { HNSWIndex, NSWIndex, HNSWOptions, NSWOptions, SearchResult } from './L2_memory/hnsw-index';
+export type { HNSWIndex, NSWIndex, HNSWOptions, NSWOptions, SearchResult, HNSWStats } from './L2_memory/hnsw-index';
 export {
   ensureStores,
   putStoreDoc,
@@ -258,6 +345,17 @@ export {
   embedText,
 } from './L2_memory/stores';
 export type { StoreKind, StoreDoc, StorePaths, VectorStore } from './L2_memory/stores';
+export {
+  ReasoningBank,
+  episodeToReasoningInput,
+} from './L2_memory/reasoning-bank';
+export type { ReasoningTrace, ReasoningBankOptions } from './L2_memory/reasoning-bank';
+export {
+  distillChangeToStore,
+  distillConventionsToStore,
+  distillProjectChange,
+} from './L9_knowledge/spec-distill';
+export type { DistillResult } from './L9_knowledge/spec-distill';
 export {
   classifyTurn,
   generateCuratedManifest,
@@ -319,6 +417,8 @@ export { SkillRegistry } from './L5_skill/registry';
 export type { SkillMeta } from './L5_skill/registry';
 export { SkillComposer } from './L5_skill/composer';
 export type { ComposedSkill } from './L5_skill/composer';
+export { checkProcessSkillsGate, collectProcessEvidence } from './L5_skill/process-skills-gate';
+export type { SkillGateResult, ProcessEvidence } from './L5_skill/process-skills-gate';
 
 // L6 - Security
 export { scanSecrets } from './L6_security/scanners/secret';
@@ -461,6 +561,39 @@ export type {
   CircuitBreakerMetrics,
   StageBreakerContext,
 } from './L7_loop/circuit-breaker';
+export {
+  loadBatchConfig,
+  planBatch,
+  writeBatchReport,
+  runBatchPlanOnly,
+  groupBatchItems,
+  spawnBatchWorktrees,
+} from './L7_loop/batch-runner';
+export type {
+  BatchItem,
+  BatchConfig,
+  BatchGroupResult,
+  BatchPlan,
+  BatchItemResult,
+  BatchReportSummary,
+  BatchWorktreeSpawnOptions,
+} from './L7_loop/batch-runner';
+export {
+  loadAutonomy,
+  checkAutonomyGate,
+} from './L7_loop/autonomy';
+export type {
+  AutonomyLevel,
+  AutonomyDecision,
+} from './L7_loop/autonomy';
+export {
+  recordCheckerFailure,
+  recordCheckerPass,
+  isStoryBlockedByReviewCap,
+  loadReviewCap,
+  DEFAULT_MAX_CHECKER_FAILURES,
+} from './L7_loop/maker-checker-cap';
+export type { ReviewCapState } from './L7_loop/maker-checker-cap';
 export { PhaseLoop } from './L7_loop/phase-loop';
 export type {
   PhaseResult,
@@ -611,6 +744,71 @@ export {
 } from './L7_loop/completion-sentinel';
 export type { SentinelKey, SentinelMatch, SentinelAllMatch } from './L7_loop/completion-sentinel';
 
+// R10 第11轮 (P1 状态收敛) — TransitionPlanner 纯函数
+export {
+  planTransition,
+  makeDefaultInput,
+  DEFAULT_STAGE_ORDER,
+} from './L7_loop/runtime/transition-planner';
+export type {
+  TransitionEvent,
+  TransitionAction,
+  TransitionInput,
+  TransitionResult,
+} from './L7_loop/runtime/transition-planner';
+
+// R12 P6 Plus: 导出主编排器 + 阶段执行器
+export {
+  NextOrchestrator,
+} from './L7_loop/runtime/next-orchestrator';
+export type {
+  NextOrchestratorDeps,
+} from './L7_loop/runtime/next-orchestrator';
+export {
+  PhaseHandler,
+} from './L7_loop/runtime/phase-handler';
+export type {
+  PhaseHandlerDeps,
+} from './L7_loop/runtime/phase-handler';
+// R12 P6 Plus2: 导出状态同步 + 审计评估 + OuterLoop + V11 子模块
+export {
+  StateSync,
+} from './L7_loop/runtime/state-sync';
+export type {
+  StateSyncDeps,
+} from './L7_loop/runtime/state-sync';
+export {
+  AuditEvaluator,
+} from './L7_loop/runtime/audit-evaluator';
+export type {
+  AuditEvaluatorDeps,
+} from './L7_loop/runtime/audit-evaluator';
+export {
+  OuterLoopRunner,
+} from './L7_loop/runtime/outer-loop-runner';
+export type {
+  OuterLoopRunnerDeps,
+} from './L7_loop/runtime/outer-loop-runner';
+export {
+  NextV11,
+} from './L7_loop/runtime/next-v11';
+export type {
+  NextV11Deps,
+} from './L7_loop/runtime/next-v11';
+// R12 P6 Plus3: 导出生命周期 + 响应构造子模块
+export {
+  LifecycleHandler,
+} from './L7_loop/runtime/lifecycle-handler';
+export type {
+  LifecycleHandlerDeps,
+} from './L7_loop/runtime/lifecycle-handler';
+export {
+  ResponseBuilder,
+} from './L7_loop/runtime/response-builder';
+export type {
+  ResponseBuilderDeps,
+} from './L7_loop/runtime/response-builder';
+
 // L7 - Task Source Adapters (T27 / ralphy pattern)
 export {
   TaskSourceAdapter,
@@ -634,6 +832,19 @@ export type { ConventionsEntry } from './L7_loop/learn-from-task';
 // All L8 DAG exports (L8DAGBuilder, DAGNodeType, etc.) are now in the L7 section above.
 export { ModelRouter } from './L8_orchestrator/model-router';
 export type { ModelRoute, ModelTier, TaskComplexity } from './L8_orchestrator/model-router';
+
+// R10 第11轮 (P2 风险路由) — RiskRouter
+export {
+  routeByRisk,
+  extendReviewers,
+  shouldUseWorktree,
+} from './L8_orchestrator/risk-router';
+export type {
+  RiskLevel,
+  ReviewerRole,
+  RiskSignals,
+  ReviewPlan,
+} from './L8_orchestrator/risk-router';
 export { SwarmCoordinator } from './L8_orchestrator/swarm/coordinator';
 export type {
   SwarmTopology,

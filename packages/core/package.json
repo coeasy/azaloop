@@ -1,6 +1,6 @@
 {
   "name": "@azaloop/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "AzaLoop core loop engine - three-level loop hierarchy with circuit breaker and completion gate",
   "main": "dist/index.js",

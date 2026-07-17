@@ -12,6 +12,14 @@
 
 AzaLoop is an **MCP server** that drives a full-auto development cycle. Install any of 25+ supported AI coding assistants, run **one command**, and your AI gains the ability to autonomously plan, code, test, and deliver software.
 
+### What makes AzaLoop different
+
+- **PRD auto Competitive Research** — when generating/reviewing a PRD, AzaLoop searches GitHub for similar open-source projects and injects a `## Competitive Research` section (unique vs OpenSpec / Superpowers / ralphy / spec-kit).
+- **Thin MCP surface (≤9 tools)** — full Spec → Loop → Quality → Ship spine without exploding tool count.
+- **Cross-client resume** — durable `.aza/` STATE + RESUME + `next_action` chain across Cursor / Claude Code / OpenCode and more.
+- **No-extra-input cooperative full-auto** — `aza_auto` selects the plan and pauses only when the host coding assistant must implement; the host **must** execute `next_action` → `aza_loop(report_tool)` until `aza_finish(ship)` without asking the user again.
+- **L3 inline** — with `autonomy.level: L3`, design, quality, and shipping run inline; only implementation is delegated to the host coding assistant.
+
 ### One-Command Setup
 
 ```bash
@@ -20,6 +28,34 @@ npx @azaloop/cli init
 ```
 
 Then open your AI assistant and type your requirements. AzaLoop handles the rest.
+
+### 能力矩阵（自动从注册表生成）
+
+<!-- AZA_CAPABILITIES_START -->
+
+## AzaLoop 能力矩阵
+
+> 来源: `packages/core/src/evidence/capability-registry.ts` | 总计: 14 | experimental: 2 | verified: 11 | certified: 1
+
+> verified 证据覆盖率: 100% | certified E2E 覆盖率: 100%
+
+| 能力 | 成熟度 | 对齐竞品 | 证据 |
+|------|--------|----------|------|
+| 跨会话自动续航 | ✅ verified | planning-with-files, comet, ralphy-openspec | 2 测试 / E2E / @2026-07-16 |
+| 跨客户端续跑 | ✅ verified | ai-coding-guide, superpowers-zh | 1 测试 / @2026-07-16 |
+| PRD 自动 GitHub 竞品研究 | 🏆 certified | claude-skills, OpenSpec | 1 测试 / E2E / client / @2026-07-16 |
+| autonomy.level 硬门控 | ✅ verified | loop-engineering | 1 测试 / @2026-07-16 |
+| Process Skills 硬门控 | ✅ verified | superpowers, agent-skills | 1 测试 / @2026-07-16 |
+| ShellWard DLP 默认扫 tools/call | ✅ verified | shellward | 1 测试 / @2026-07-16 |
+| Batch 真 git worktree 并行 | ✅ verified | ralphy, ralphy-openspec, agency-orchestrator | 1 测试 / @2026-07-16 |
+| Task Identity 防旧任务污染 | ✅ verified | planning-with-files, comet | 3 测试 / @2026-07-16 |
+| Maker/Checker 双轨 | ✅ verified | superpowers, gstack | 1 测试 / @2026-07-16 |
+| YAML Workflow 编排 | ✅ verified | agency-orchestrator, OpenSpec | 1 测试 / @2026-07-16 |
+| 向量记忆 HNSW | ✅ verified | ruflo, Trellis | 2 测试 / @2026-07-16 |
+| 多角色对抗式 PRD 审查 | ✅ verified | gstack, agent-skills | 2 测试 / @2026-07-16 |
+| 25+ 客户端模板 | 🧪 experimental | ai-coding-guide, superpowers-zh | — |
+| Swarm 推理复用 | 🧪 experimental | ruflo | — |
+<!-- AZA_CAPABILITIES_END -->
 
 ### Per-Client Quick Start Guides
 
@@ -39,7 +75,7 @@ Then open your AI assistant and type your requirements. AzaLoop handles the rest
 | Gemini CLI | [docs/clients/gemini-cli.md](docs/clients/gemini-cli.md) | T2 |
 | Codex CLI | [docs/clients/codex-cli.md](docs/clients/codex-cli.md) | T2 |
 | Comate (百度) | [docs/clients/comate.md](docs/clients/comate.md) | T2 |
-| Workbuddy (字节) | [docs/clients/workbuddy.md](docs/clients/workbuddy.md) | T2 |
+| WorkBuddy (腾讯) | [docs/clients/workbuddy.md](docs/clients/workbuddy.md) | T2 |
 | Qwen Code (阿里) | [docs/clients/qwen-code.md](docs/clients/qwen-code.md) | T2 |
 | Aider | [docs/clients/aider.md](docs/clients/aider.md) | T3 |
 | Zed | [docs/clients/zed.md](docs/clients/zed.md) | T3 |
@@ -114,6 +150,15 @@ npm install -g @azaloop/cli @azaloop/mcp-server
 
 **AzaLoop** 是一个 PRD 驱动的自主开发循环引擎，以 MCP 服务器形式运行。安装任意一款支持的 AI 编码助手客户端，运行**一条命令**，你的 AI 就能自动完成从需求到交付的全流程。
 
+### 差异化卖点
+
+- **PRD 自动 GitHub 竞品研究** — 生成/评审 PRD 时自动搜索同类开源项目，写入 `## Competitive Research`（相对 OpenSpec / Superpowers / ralphy / spec-kit 为赛道独有能力，18 竞品清单全缺失）。
+- **薄 MCP 工具面（≤9）** — Spec → Loop → Quality → Ship 全脊柱，不膨胀工具数。
+- **跨客户端续航** — `.aza/` STATE + RESUME + `next_action` 链式驱动；cursor/trae/opencode/claude-code 切换可续跑。
+- **无需追加输入的合作式全自动** — `aza_auto` 自动选择方案，仅在宿主编码助手需要实现代码时暂停；宿主必须立刻执行 `next_action` → `aza_loop(report_tool)` 直到 `aza_finish(ship)`，全程不再询问用户。
+- **L3 内联** — `autonomy.level: L3` 时 design / quality / ship 全部内联，只有 implement（写码）委托给宿主编码助手。
+- **18 竞品全量对齐** — 覆盖 planning-with-files、spec-kit、OpenSpec、Superpowers、gstack、Ralphy、Ruflo、Trellis、Comet、ShellWard 等 18 个官方项目的核心能力；详见 [docs/competitive-analysis/](docs/competitive-analysis/) 与 `packages/core/src/evidence/capability-registry.ts`（experimental / verified / certified 三档成熟度注册表）。
+
 ### 安装方式
 
 #### 方式 1：一行命令（推荐）
@@ -179,7 +224,7 @@ aza_session(calibrate|continue) → aza_prd(review→approve) → aza_loop(full)
 | 层级 | 客户端 | 自动循环 |
 |------|--------|----------|
 | **T1 完整** | Cursor, Claude Code, OpenCode, Trae | ✅ 全自动 |
-| **T2 部分** | VS Code, Cline, Roo Code, Windsurf, Continue, Gemini CLI, Codex CLI, Comate, Workbuddy, Qwen Code, GitHub Copilot, Claude Desktop | ✅/部分 |
+| **T2 部分** | VS Code, Cline, Roo Code, Windsurf, Continue, Gemini CLI, Codex CLI, Comate, WorkBuddy, Qwen Code, GitHub Copilot, Claude Desktop | ✅/部分 |
 | **T3 基础** | Aider, Zed, Goose, Hermes, OpenClaw, Kiro, Codeium, Droid, OpenHands | ❌ 手动 |
 
 ### 特性
@@ -227,9 +272,7 @@ npx @azaloop/cli init
 
 ```bash
 pnpm install
-pnpm build
-pnpm test
-pnpm typecheck
+pnpm check
 ```
 
 ### 项目结构

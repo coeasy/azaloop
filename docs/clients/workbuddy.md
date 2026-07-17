@@ -1,39 +1,27 @@
-# AzaLoop × Workbuddy (字节跳动)
+# Workbuddy (`workbuddy`)
 
-**Tier:** T2 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ✅ (via rules)
+> Tier1: ⚪ experimental | Category: ide | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=workbuddy`
+
+## 安装步骤
+
+- VSCode 安装 Workbuddy 扩展
+- 配置 mcpServers
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client workbuddy
+workbuddy --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.workbuddy/mcp.json` |
-| 规则文件 | `.workbuddy/rules.md` |
+- `aza_session`
+- `aza_loop`
 
-### MCP 配置 `.workbuddy/mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-Workbuddy 支持 MCP 协议和 skills 系统，自动跟踪循环。
-
-## Troubleshooting
-
-- 字节跳动 Workbuddy 的 MCP 支持
-- 规则文件自动加载到上下文
+- 团队版限制

@@ -1,39 +1,27 @@
-# AzaLoop × Kiro
+# Kiro (`kiro`)
 
-**Tier:** T2 | **MCP:** ✅ | **Hooks:** ❌ | **Auto-Loop:** ❌ (manual)
+> Tier1: ⚪ experimental | Category: ide | Since: 0.1.2
 
-## 快速开始
+## 环境变量
+
+- `AZA_CLIENT_NAME=kiro`
+
+## 安装步骤
+
+- VSCode 安装 Kiro 扩展
+- 配置 mcpServers
+
+## 启动命令
 
 ```bash
-npx @azaloop/cli init --client kiro
+kiro --mcp-server aza
 ```
 
-## 配置
+## 推荐工具
 
-| 文件 | 位置 |
-|------|------|
-| MCP 配置 | `.kiro/mcp.json` |
-| 规则文件 | `.kiro/azaloop.md` |
+- `aza_session`
+- `aza_loop`
 
-### MCP 配置 `.kiro/mcp.json`
+## 已知限制
 
-```json
-{
-  "mcpServers": {
-    "azaloop": {
-      "command": "npx",
-      "args": ["@azaloop/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-## 使用
-
-Kiro 支持 MCP 协议，无自动 next_action 跟踪。
-
-## Troubleshooting
-
-- 手动跟踪循环步骤
-- MCP 工具需要用户确认
+- MCP 实验阶段

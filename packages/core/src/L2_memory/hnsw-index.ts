@@ -39,6 +39,35 @@ export interface HNSWIndex {
   size(): number;
   /** All keys currently stored. */
   keys(): string[];
+  /**
+   * R10 第11轮 (P4 可观测性)：索引级指标。
+   * 借鉴 ruflo AgentDB「introspection」+ 通用 metrics 模式：
+   * 暴露插入/查询计数、平均度、平均查询延迟。
+   */
+  stats(): HNSWStats;
+}
+
+export interface HNSWStats {
+  /** 节点数 */
+  size: number;
+  /** 图平均度（邻居数） */
+  avgDegree: number;
+  /** 图最大度 */
+  maxDegree: number;
+  /** 是否使用 brute force 回退 */
+  bruteForce: boolean;
+  /** 累计 insert 调用次数 */
+  insertCount: number;
+  /** 累计 search 调用次数 */
+  searchCount: number;
+  /** 累计搜索命中节点数 */
+  totalHits: number;
+  /** 搜索平均命中率（hits / search） */
+  avgHitRate: number;
+  /** 维度 */
+  dimensions: number;
+  /** M（最大邻居数） */
+  M: number;
 }
 
 export type NSWIndex = HNSWIndex;
@@ -118,6 +147,10 @@ export function createNSWIndex(options: NSWOptions): NSWIndex {
   const store: Map<string, number[]> = new Map();
   const neighbors: Map<string, Set<string>> = new Map();
   let entryPoint: string | null = null;
+  // R10 第11轮 (P4 可观测性) — 计数器
+  let insertCount = 0;
+  let searchCount = 0;
+  let totalHits = 0;
 
   function ensureNode(key: string): void {
     if (!neighbors.has(key)) neighbors.set(key, new Set());
@@ -222,6 +255,7 @@ export function createNSWIndex(options: NSWOptions): NSWIndex {
           link(key, nb);
         }
       }
+      insertCount++;
     },
     search(query: number[], k: number = defaultK): SearchResult[] {
       if (query.length !== dimensions) {
@@ -230,13 +264,38 @@ export function createNSWIndex(options: NSWOptions): NSWIndex {
         );
       }
       const q = normaliseVec(query, normalize);
-      return graphSearch(q, k);
+      const results = graphSearch(q, k);
+      searchCount++;
+      totalHits += results.length;
+      return results;
     },
     size(): number {
       return store.size;
     },
     keys(): string[] {
       return Array.from(store.keys());
+    },
+    stats(): HNSWStats {
+      // 计算度统计
+      let totalDeg = 0;
+      let maxDeg = 0;
+      for (const set of neighbors.values()) {
+        totalDeg += set.size;
+        if (set.size > maxDeg) maxDeg = set.size;
+      }
+      const avgDegree = store.size > 0 ? totalDeg / store.size : 0;
+      return {
+        size: store.size,
+        avgDegree,
+        maxDegree: maxDeg,
+        bruteForce: M <= 0 || store.size <= Math.max(32, M * 2),
+        insertCount,
+        searchCount,
+        totalHits,
+        avgHitRate: searchCount > 0 ? totalHits / searchCount : 0,
+        dimensions,
+        M,
+      };
     },
   };
 }

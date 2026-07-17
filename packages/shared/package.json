@@ -1,6 +1,6 @@
 {
   "name": "@azaloop/shared",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "AzaLoop shared types and schemas",
   "main": "dist/index.js",

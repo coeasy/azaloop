@@ -1,6 +1,13 @@
 
 const fs = require('fs');
-const path = 'D:/work_code/azaloop/azaloop/docs/competitive-analysis/AzaLoop-18项目深度对比与优化方案-2026-07-14.md';
+const path = require('path');
+const outputPath = path.join(
+  __dirname,
+  '..',
+  'docs',
+  'competitive-analysis',
+  'AzaLoop-18项目深度对比与优化方案-2026-07-14.md',
+);
 const lines = [];
 lines.push('# AzaLoop 18 项目深度对比与优化重构方案');
 lines.push('');
@@ -55,6 +62,6 @@ lines.push('');
 lines.push('### 1.3 贯通性结论');
 lines.push('');
 lines.push('**主体流程已完全贯通。** 从 L0 到 L9 的 10 层架构、质量流水线、连续性系统、Hook 事件系统、CLI 命令全部接线。AzaLoop 在架构完整性上已经超越了所有 18 个参考项目。');
-fs.writeFileSync(path, lines.join('
-'), 'utf8');
+fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+fs.writeFileSync(outputPath, lines.join('\n'), 'utf8');
 console.log('Written successfully');

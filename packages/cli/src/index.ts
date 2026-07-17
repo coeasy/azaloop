@@ -10,6 +10,7 @@ import { budgetCommand } from './commands/budget';
 import { auditCommand } from './commands/audit';
 import { packCommand } from './commands/pack';
 import { registerDaemonCommand } from './commands/daemon';
+import { statusCommand } from './commands/status';
 
 const program = new Command();
 
@@ -106,6 +107,21 @@ program
     } catch {
       console.log('\n  ⚠ MCP server not found. Run: aza init\n');
     }
+  });
+
+program
+  .command('state')
+  .description('R10 第11轮 (P4 状态查看): 一键全息 — files / capabilities / trace / vector store')
+  .option('--root <path>', 'Project root directory')
+  .option('--json', 'Output JSON instead of human-readable')
+  .option('--report', 'Also write to .aza/evidence/status.{json,md}')
+  .action(async (options) => {
+    const code = await statusCommand({
+      root: normalizeCliPath(options.root),
+      json: !!options.json,
+      report: !!options.report,
+    });
+    process.exitCode = code;
   });
 
 program

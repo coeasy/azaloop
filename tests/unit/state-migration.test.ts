@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { StateManager } from '../../packages/core/src/state/state-manager';
 import migrateV1ToV2 from '../../packages/core/src/state/migrations/v1-to-v2';
+import { MIGRATIONS } from '../../packages/core/src/state/migrations/registry';
 
 describe('v14-P9.3 State migration + atomic writes', () => {
   let tmpDir: string;
@@ -26,8 +27,7 @@ describe('v14-P9.3 State migration + atomic writes', () => {
     await sm.load();
     const fp = path.join(tmpDir, 'STATE.yaml');
     const content = await fs.readFile(fp, 'utf8');
-    const patched = `schema_version: 2\n${content}`;
-    await fs.writeFile(fp, patched, 'utf8');
+    expect(content).toContain('schema_version: 2');
     const sm2 = new StateManager(tmpDir);
     const r = await sm2.loadWithMigration();
     expect(r).toBeDefined();
@@ -38,7 +38,7 @@ describe('v14-P9.3 State migration + atomic writes', () => {
     expect(files.some((f) => f.endsWith('.bak'))).toBe(false);
   });
 
-  it('2) v1 state is auto-migrated to v2 and a .bak is created', async () => {
+  it('2) normal production load auto-migrates v1 state to v2 and creates a .bak', async () => {
     // Write a v1 state (no schema_version) by stripping the field from
     // a valid STATE.yaml.
     const sm = new StateManager(tmpDir);
@@ -52,7 +52,7 @@ describe('v14-P9.3 State migration + atomic writes', () => {
       .join('\n');
     await fs.writeFile(fp, v1yaml, 'utf8');
     const sm2 = new StateManager(tmpDir);
-    const r = await sm2.loadWithMigration();
+    const r = await sm2.load();
     expect(r).toBeDefined();
     // The .bak file should exist (from migration).
     const bak = await fs.stat(path.join(tmpDir, 'STATE.yaml.bak'));
@@ -94,5 +94,62 @@ describe('v14-P9.3 State migration + atomic writes', () => {
     const sm = new StateManager(tmpDir);
     const r = await sm.migrateState({ pipeline: {} } as unknown as Record<string, unknown>, 1, 2);
     expect((r as { schema_version: number }).schema_version).toBe(2);
+  });
+
+  it('6) migration registry owns the executable transformer', () => {
+    const migration = MIGRATIONS.find((item) => item.from === 1 && item.to === 2);
+
+    expect(migration).toBeDefined();
+    expect((migration as unknown as { transformer?: unknown }).transformer).toBe(migrateV1ToV2);
+  });
+
+  it('7) normal load fails closed when the migration path is incomplete', async () => {
+    const sm = new StateManager(tmpDir);
+    await sm.load();
+    const currentVersion = StateManager.CURRENT_STATE_VERSION;
+    Object.defineProperty(StateManager, 'CURRENT_STATE_VERSION', {
+      configurable: true,
+      value: currentVersion + 1,
+    });
+
+    try {
+      await expect(new StateManager(tmpDir).load()).rejects.toThrow(
+        new RegExp(`No migration available for v${currentVersion}.*v${currentVersion + 1}`),
+      );
+    } finally {
+      Object.defineProperty(StateManager, 'CURRENT_STATE_VERSION', {
+        configurable: true,
+        value: currentVersion,
+      });
+    }
+  });
+
+  it('8) normal load preserves a backup and rejects transformer failures', async () => {
+    const sm = new StateManager(tmpDir);
+    await sm.load();
+    const statePath = path.join(tmpDir, 'STATE.yaml');
+    const current = await fs.readFile(statePath, 'utf8');
+    await fs.writeFile(
+      statePath,
+      current.replace(/^schema_version:\s*\d+\s*\r?\n/m, ''),
+      'utf8',
+    );
+    const migration = MIGRATIONS[0] as unknown as {
+      transformer: (state: Record<string, unknown>) => Record<string, unknown>;
+    };
+    const original = migration.transformer;
+    migration.transformer = () => {
+      throw new Error('synthetic transformer failure');
+    };
+
+    try {
+      await expect(new StateManager(tmpDir).load()).rejects.toThrow(
+        /Migration v1.*v2 failed: synthetic transformer failure/,
+      );
+      const backup = await fs.readFile(`${statePath}.bak`, 'utf8');
+      expect(backup).not.toContain('schema_version:');
+    } finally {
+      migration.transformer = original;
+    }
   });
 });
