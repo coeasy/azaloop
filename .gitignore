@@ -72,3 +72,12 @@ mcp.json
 .qoder/
 .uploads/
 .agentvault/
+
+# Local build/test/verify debug artifacts (never commit)
+_e2e_*
+*_build.txt
+alltest.txt
+spine_test.txt
+verify_*.txt
+tsc_*.txt
+_tmp_*
